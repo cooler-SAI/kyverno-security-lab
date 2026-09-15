@@ -30,3 +30,16 @@ apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
 - role: worker
+```
+
+### 2. Run the following command to spin up the cluster:
+```yaml
+kind create cluster --config kind-config.yaml --name kyverno-lab
+```
+
+### 3. Verify your cluster is up and running:
+```yaml
+kubectl cluster-info --context kind-kyverno-lab
+```
+
+
