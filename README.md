@@ -1,6 +1,6 @@
 # Kyverno Security Lab
 
-A hands-on, practical lab for implementing Kubernetes cluster security and governance using Policy-as-Code with **Kyverno**. This project demonstrates modern, high-performance policy validation using Common Expression Language (CEL) via Kyverno's `ValidatingPolicy` standard.
+A hands-on, practical lab for implementing Kubernetes cluster security and governance using Policy-as-Code with **Kyverno**. This project demonstrates policy enforcement using the standard, Kubernetes-native Kyverno `ClusterPolicy` (`kyverno.io/v1`).
 
 ---
 
@@ -18,7 +18,7 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
   - [5. Test Policy Enforcement](#5-test-policy-enforcement)
     - [Negative Test: Reject Pod Without Limits](#negative-test-reject-pod-without-limits)
     - [Positive Test: Accept Compliant Pod](#positive-test-accept-compliant-pod)
-- [Policy Deep Dive: CEL ValidatingPolicy](#policy-deep-dive-cel-validatingpolicy)
+- [Policy Deep Dive: ClusterPolicy](#policy-deep-dive-clusterpolicy)
 - [Testing with Kyverno CLI (Shift-Left / CI/CD)](#testing-with-kyverno-cli-shift-left--cicd)
 - [Troubleshooting & Verification](#troubleshooting--verification)
 - [Cleanup](#cleanup)
@@ -28,14 +28,14 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
 
 ## Project Overview
 
-In multi-tenant or production Kubernetes environments, uncontrolled container workloads can cause resource exhaustion (noisy neighbors, CPU throttling, or OOM-kills) that degrades node reliability. 
+In multi-tenant or production Kubernetes environments, uncontrolled container workloads can cause resource exhaustion (noisy neighbors, CPU throttling, or Out-Of-Memory / OOM-kills) that degrades node reliability. 
 
 This lab demonstrates how to enforce mandatory CPU and memory resource limits across all container types (standard containers, init containers, and ephemeral containers) using Kyverno before any pod is scheduled onto a node.
 
 ### Why Kyverno?
 - **Kubernetes-Native:** Written in declarative YAML — no custom domain-specific languages (DSLs) like Rego or Go programming required.
-- **CEL Powered:** Leverages Kubernetes-native Common Expression Language (CEL) for blazing-fast validation logic directly in admission review.
-- **Flexible Actions:** Supports both auditing (`Audit`) and active enforcement (`Deny`).
+- **Pattern Matching:** Simple, intuitive declarative patterns to validate Kubernetes object structures.
+- **Flexible Actions:** Supports both auditing (`Audit`) and active admission enforcement (`Enforce`).
 - **Comprehensive Lifecycle:** Validates, mutates, generates, and cleans up Kubernetes resources.
 
 ---
@@ -43,8 +43,8 @@ This lab demonstrates how to enforce mandatory CPU and memory resource limits ac
 ## Key Features
 
 - **Policy-as-Code:** Declarative policy definitions managed under version control.
-- **CEL Validation Rules:** Uses `policies.kyverno.io/v1` `ValidatingPolicy` to evaluate container specs efficiently.
-- **Full Container Coverage:** Evaluates `spec.containers`, `spec.initContainers`, and `spec.ephemeralContainers`.
+- **Standard CRD:** Uses the production-standard `kyverno.io/v1` `ClusterPolicy` resource.
+- **Comprehensive Container Coverage:** Evaluates `spec.containers`, `spec.initContainers`, and `spec.ephemeralContainers`.
 - **Shift-Left Ready:** Policies and manifests can be validated in CI/CD pipelines before deployment to clusters.
 
 ---
@@ -53,7 +53,7 @@ This lab demonstrates how to enforce mandatory CPU and memory resource limits ac
 
 ```plaintext
 kyverno-security-lab/
-├── require-limits.yaml   # CEL-based Kyverno ValidatingPolicy enforcing CPU & memory limits
+├── require-limits.yaml   # Kyverno ClusterPolicy enforcing CPU & memory limits
 ├── bad-pod.yaml          # Negative test case (violates policy, missing limits)
 ├── good-pod.yaml         # Positive test case (conforms to policy, limits defined)
 └── README.md             # Project documentation and hands-on guide
@@ -141,7 +141,7 @@ kubectl get pods -n kyverno
 kubectl get crd | grep kyverno
 ```
 
-You should see controllers running (admission controller, background controller, reports controller) and the `validatingpolicies.policies.kyverno.io` CRD registered.
+You should see controllers running (admission controller, background controller, reports controller) and the `clusterpolicies.kyverno.io` CRD registered.
 
 ---
 
@@ -153,16 +153,16 @@ Apply the `require-limits.yaml` policy manifest to the cluster:
 kubectl apply -f require-limits.yaml
 ```
 
-Verify that the policy is installed and ready:
+Verify that the cluster policy is installed and ready:
 
 ```bash
-kubectl get validatingpolicy
+kubectl get clusterpolicy
 ```
 
 *Expected output:*
 ```plaintext
-NAME                         READY   STATUS    AGE
-require-cpu-memory-limits    true    Ready     10s
+NAME                         ADMISSION   BACKGROUND   READY   AGE   MESSAGE
+require-cpu-memory-limits    true        true         true    10s   Ready
 ```
 
 ---
@@ -183,8 +183,11 @@ The admission webhook intercepts the request and blocks pod creation with a clea
 ```plaintext
 Error from server: error when creating "bad-pod.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
 
-ValidatingPolicy require-cpu-memory-limits failed with message:
-CPU and memory resource limits are required for all containers.
+resource Pod/default/test-pod-bad was blocked due to the following policies 
+
+require-cpu-memory-limits:
+  check-cpu-memory-limits: 'validation error: CPU and memory resource limits are required
+    for all containers. rule check-cpu-memory-limits failed at path /spec/containers/0/resources/limits/'
 ```
 
 Confirm that the pod was **not** created:
@@ -219,55 +222,69 @@ kubectl get pod test-pod-good -o jsonpath='{.spec.containers[*].resources}'
 
 ---
 
-## Policy Deep Dive: CEL ValidatingPolicy
+## Policy Deep Dive: ClusterPolicy
 
 Below is the annotated `require-limits.yaml` policy:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/policies.kyverno.io/validatingpolicy_v1.json
-apiVersion: policies.kyverno.io/v1
-kind: ValidatingPolicy
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/kyverno.io/clusterpolicy_v1.json
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
 metadata:
   name: require-cpu-memory-limits
+  annotations:
+    policies.kyverno.io/title: Require CPU and Memory Limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Containers without resource limits can monopolize cluster resources and
+      affect other workloads. This policy ensures all containers, init containers,
+      and ephemeral containers define CPU and memory limits.
 spec:
-  validationActions:
-    - Deny                     # Rejects non-compliant admission requests (can also be 'Audit')
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["pods"]    # Targets core Pod resources during CREATE and UPDATE
-  variables:
-    # Concatenate regular containers, initContainers, and ephemeralContainers safely
-    - name: allContainers
-      expression: >-
-        object.spec.containers + 
-        object.spec.?initContainers.orValue([]) + 
-        object.spec.?ephemeralContainers.orValue([])
-  validations:
-    # CEL expression: ensures all containers define CPU and memory limits
-    - expression: >-
-        variables.allContainers.all(c,
-          has(c.resources) &&
-          has(c.resources.limits) &&
-          has(c.resources.limits.cpu) &&
-          has(c.resources.limits.memory)
-        )
-      message: "CPU and memory resource limits are required for all containers."
+  validationFailureAction: Enforce  # Blocks non-compliant admission requests (can also be 'Audit')
+  background: true                  # Evaluates existing cluster resources in background scans
+  rules:
+    - name: check-cpu-memory-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod              # Matches Pod resources during CREATE and UPDATE
+      validate:
+        message: "CPU and memory resource limits are required for all containers."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"      # Requires a non-empty CPU limit
+                    memory: "?*"   # Requires a non-empty memory limit
+            =(initContainers):
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+            =(ephemeralContainers):
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
 ```
 
 ### Key Policy Components
 
-1. **`validationActions: [Deny]`**:
-   - `Deny` enforces strict admission control and returns an admission error to the client.
-   - For a phased rollout in an existing cluster, switch to `Audit` to monitor violations in policy reports without interrupting workloads.
-2. **`variables` (`allContainers`)**:
-   - Combines standard containers, optional init containers (`.?initContainers.orValue([])`), and ephemeral containers.
-   - Prevents bypass attacks where an attacker configures limits on regular containers but leaves init containers unrestricted.
-3. **`validations`**:
-   - Uses CEL's `.all()` quantifier function to iterate through every container.
-   - Checks presence via `has()` to prevent null-pointer evaluations.
+1. **`apiVersion: kyverno.io/v1` & `kind: ClusterPolicy`**:
+   - The production standard Kyverno resource definition, fully recognized by Kubernetes and IDE validation schemas.
+2. **`validationFailureAction: Enforce`**:
+   - `Enforce` rejects non-compliant requests at admission time.
+   - For initial rollout on live clusters, setting this to `Audit` allows reporting violations in PolicyReports without blocking deployments.
+3. **Pattern Matching (`pattern`)**:
+   - Kyverno uses declarative pattern matching to verify the structure of Kubernetes manifests.
+   - `?*` is a wildcard ensuring the field exists and contains at least one character.
+4. **Conditional Anchors (`=(initContainers)`, `=(ephemeralContainers)`)**:
+   - The parentheses `=(...)` denote an *existence anchor*.
+   - If `initContainers` or `ephemeralContainers` are present in the Pod spec, Kyverno enforces CPU and memory limits on them as well. If they are absent, the check passes.
 
 ---
 
@@ -277,10 +294,10 @@ You can validate manifests against Kyverno policies locally or in continuous int
 
 ```bash
 # Test the bad pod (should fail)
-kyverno test . --manifests bad-pod.yaml
+kyverno apply require-limits.yaml --resource bad-pod.yaml
 
 # Test the compliant pod (should pass)
-kyverno test . --manifests good-pod.yaml
+kyverno apply require-limits.yaml --resource good-pod.yaml
 ```
 
 ---
@@ -293,8 +310,8 @@ kyverno test . --manifests good-pod.yaml
   ```
 - **Inspect Policy Reports:**
   ```bash
-  kubectl get policyreport -A
-  kubectl describe policyreport
+  kubectl get clusterpolicyreport -A
+  kubectl describe clusterpolicyreport
   ```
 - **Check Validating Webhook Configurations:**
   ```bash
@@ -326,7 +343,7 @@ kind delete cluster --name kyverno-lab
 2. **Disallow Privileged Containers:** Ensure `securityContext.privileged: false` is enforced.
 3. **Prevent Root Users:** Require containers to run as non-root (`runAsNonRoot: true`).
 4. **Disallow `:latest` Image Tags:** Enforce immutable image tags or SHA256 digests in manifests.
-5. **Gradual Rollout:** Deploy new policies with `validationActions: [Audit]` first to assess impact before switching to `Deny`.
+5. **Gradual Rollout:** Deploy new policies with `validationFailureAction: Audit` first to assess impact before switching to `Enforce`.
 
 ---
 
