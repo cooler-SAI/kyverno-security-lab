@@ -10,6 +10,7 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
 - [Key Features](#key-features)
 - [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
+- [Quick Start (Automated Lab)](#quick-start-automated-lab)
 - [Step-by-Step Lab Walkthrough](#step-by-step-lab-walkthrough)
   - [1. Provision Local Cluster with Kind](#1-provision-local-cluster-with-kind)
   - [2. Install Kyverno via Helm](#2-install-kyverno-via-helm)
@@ -46,6 +47,7 @@ This lab demonstrates how to enforce mandatory CPU and memory resource limits ac
 - **Standard CRD:** Uses the production-standard `kyverno.io/v1` `ClusterPolicy` resource.
 - **Comprehensive Container Coverage:** Evaluates `spec.containers`, `spec.initContainers`, and `spec.ephemeralContainers`.
 - **Shift-Left Ready:** Policies and manifests can be validated in CI/CD pipelines before deployment to clusters.
+- **Automated Lab Runner:** Cross-platform scripts (`run-lab.sh` and `run-lab.ps1`) for one-command execution and testing.
 
 ---
 
@@ -53,9 +55,12 @@ This lab demonstrates how to enforce mandatory CPU and memory resource limits ac
 
 ```plaintext
 kyverno-security-lab/
+├── kind-config.yaml      # Kind multi-node cluster configuration (1 control plane, 1 worker)
 ├── require-limits.yaml   # Kyverno ClusterPolicy enforcing CPU & memory limits
 ├── bad-pod.yaml          # Negative test case (violates policy, missing limits)
 ├── good-pod.yaml         # Positive test case (conforms to policy, limits defined)
+├── run-lab.sh            # Automated end-to-end lab script (Linux / macOS / WSL)
+├── run-lab.ps1           # Automated end-to-end lab script (Windows PowerShell)
 └── README.md             # Project documentation and hands-on guide
 ```
 
@@ -75,11 +80,47 @@ Before starting, ensure you have the following tools installed:
 
 ---
 
+## Quick Start (Automated Lab)
+
+If you have all prerequisites installed and Docker running, you can execute the entire lab end-to-end (cluster creation, Kyverno installation, policy deployment, and positive/negative testing) using a single command:
+
+### Linux / macOS / WSL
+```bash
+chmod +x run-lab.sh
+./run-lab.sh
+```
+
+### Windows (PowerShell)
+```powershell
+.\run-lab.ps1
+```
+
+### Script Actions & Subcommands
+Both scripts support granular subcommands:
+- `all` (default): Runs prerequisite checks, provisions the cluster, installs Kyverno, deploys the policy, and executes tests.
+- `up`: Provisions the Kind cluster and installs Kyverno + the security policy.
+- `test`: Executes positive and negative policy admission tests against the active cluster.
+- `down`: Cleans up test pods, removes the policy, and destroys the Kind cluster.
+
+*Example on Linux/macOS:*
+```bash
+./run-lab.sh test    # Run only policy tests
+./run-lab.sh down    # Tear down cluster and cleanup
+```
+
+*Example on Windows:*
+```powershell
+.\run-lab.ps1 -Action test   # Run only policy tests
+.\run-lab.ps1 -Action down   # Tear down cluster and cleanup
+```
+
+---
+
 ## Step-by-Step Lab Walkthrough
 
 ### 1. Provision Local Cluster with Kind
 
-Create a Kind cluster configuration file named `kind-config.yaml` to set up a multi-node cluster (1 control plane, 1 worker):
+The repository includes a ready-to-use Kind cluster configuration file named `kind-config.yaml` to set up a multi-node cluster (1 control plane, 1 worker):
 
 ```yaml
 kind: Cluster
@@ -325,13 +366,13 @@ kyverno apply require-limits.yaml --resource good-pod.yaml
 When finished with the lab, clean up deployed pods or tear down the entire Kind cluster:
 
 ```bash
-# Delete test pods
+# Using the automated script:
+./run-lab.sh down        # Linux / macOS / WSL
+.\run-lab.ps1 -Action down # Windows PowerShell
+
+# Or manually:
 kubectl delete pod test-pod-good --ignore-not-found
-
-# Delete policy
 kubectl delete -f require-limits.yaml --ignore-not-found
-
-# Delete Kind cluster
 kind delete cluster --name kyverno-lab
 ```
 
