@@ -5,7 +5,10 @@ metadata:
 spec:
   containers:
     - name: nginx
-      image: nginx:latest
+      image: nginxinc/nginx-unprivileged:alpine
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
       resources:
         limits:
           cpu: "200m"
