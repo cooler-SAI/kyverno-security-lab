@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/kyverno.io/clusterpolicy_v1.json
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-pod-security-defaults
+  annotations:
+    policies.kyverno.io/title: Auto-Inject Pod Security Defaults and Labels
+    policies.kyverno.io/category: Pod Security Standards (Restricted)
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Demonstrates Kyverno's mutation engine. Automatically injects compliance
+      governance labels and injects securityContext defaults (allowPrivilegeEscalation: false)
+      into containers if omitted from the incoming manifest.
+spec:
+  background: false
+  rules:
+    - name: inject-audit-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              +(security.kyverno.io/hardened): "true"
+
+    - name: inject-allow-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      mutate:
+        patchStrategicMerge:
+          spec:
+            containers:
+              - (name): "*"
+                securityContext:
+                  +(allowPrivilegeEscalation): false
