@@ -27,8 +27,10 @@ $ErrorActionPreference = 'Stop'
 $ClusterName   = "kyverno-lab"
 $LimitsPolicy  = "require-limits.yaml"
 $PrivPolicy    = "restrict-privilege.yaml"
+$RootPolicy    = "restrict-root-user.yaml"
 $BadPod        = "bad-pod.yaml"
 $BadPrivPod    = "bad-pod-priv.yaml"
+$BadRootPod    = "bad-pod-root.yaml"
 $GoodPod       = "good-pod.yaml"
 $KindConfig    = "kind-config.yaml"
 
@@ -116,6 +118,8 @@ function Start-ClusterUp {
     & kubectl apply -f $LimitsPolicy
     Write-Info "Applying privilege restriction policy '$PrivPolicy'..."
     & kubectl apply -f $PrivPolicy
+    Write-Info "Applying root user restriction policy '$RootPolicy'..."
+    & kubectl apply -f $RootPolicy
     Start-Sleep -Seconds 3
     & kubectl get clusterpolicy
     Write-Success "Security policies applied successfully."
@@ -151,8 +155,20 @@ function Invoke-PolicyTests {
         Write-Success "Negative test 2 passed! Kyverno admission webhook successfully blocked privileged container."
     }
 
+    # Negative Test 3: Running as Root User
+    Write-Host "`n--- Negative Test 3: Root User Container (Should be Rejected) ---" -ForegroundColor Yellow
+    Write-Info "Applying $BadRootPod..."
+    $badRootOutput = & kubectl apply -f $BadRootPod 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Err "Test Failed! Pod running as root was accepted, but should have been blocked."
+        throw "Negative test 3 failed."
+    } else {
+        Write-Host ($badRootOutput | Out-String) -ForegroundColor DarkGray
+        Write-Success "Negative test 3 passed! Kyverno admission webhook successfully blocked container running as root."
+    }
+
     # Positive Test: Compliant Pod
-    Write-Host "`n--- Positive Test: Compliant Pod With Limits (Should be Accepted) ---" -ForegroundColor Yellow
+    Write-Host "`n--- Positive Test: Compliant Pod (Should be Accepted) ---" -ForegroundColor Yellow
     Write-Info "Cleaning up previous test-pod-good if exists..."
     & kubectl delete pod test-pod-good --ignore-not-found 2>&1 | Out-Null
 
@@ -178,11 +194,12 @@ function Invoke-PolicyTests {
 function Stop-ClusterDown {
     Write-Header "Cleaning up and Tearing Down Cluster"
     Write-Info "Deleting test pods..."
-    & kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv --ignore-not-found 2>&1 | Out-Null
+    & kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root --ignore-not-found 2>&1 | Out-Null
 
     Write-Info "Deleting Kyverno cluster policies..."
     & kubectl delete -f $LimitsPolicy --ignore-not-found 2>&1 | Out-Null
     & kubectl delete -f $PrivPolicy --ignore-not-found 2>&1 | Out-Null
+    & kubectl delete -f $RootPolicy --ignore-not-found 2>&1 | Out-Null
 
     Write-Info "Deleting Kind cluster '$ClusterName'..."
     & kind delete cluster --name $ClusterName

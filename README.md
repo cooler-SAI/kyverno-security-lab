@@ -19,10 +19,12 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
   - [5. Test Policy Enforcement](#5-test-policy-enforcement)
     - [Negative Test 1: Reject Pod Without Limits](#negative-test-1-reject-pod-without-limits)
     - [Negative Test 2: Reject Privileged Container](#negative-test-2-reject-privileged-container)
+    - [Negative Test 3: Reject Root User Container](#negative-test-3-reject-root-user-container)
     - [Positive Test: Accept Compliant Pod](#positive-test-accept-compliant-pod)
 - [Policy Deep Dive: ClusterPolicy](#policy-deep-dive-clusterpolicy)
   - [Policy 1: Require Resource Limits (require-limits.yaml)](#policy-1-require-resource-limits-require-limitsyaml)
   - [Policy 2: Restrict Privileged Containers (restrict-privilege.yaml)](#policy-2-restrict-privileged-containers-restrict-privilegeyaml)
+  - [Policy 3: Restrict Root User (restrict-root-user.yaml)](#policy-3-restrict-root-user-restrict-root-useryaml)
 - [Testing with Kyverno CLI (Shift-Left / CI/CD)](#testing-with-kyverno-cli-shift-left--cicd)
 - [Troubleshooting & Verification](#troubleshooting--verification)
 - [Cleanup](#cleanup)
@@ -35,8 +37,9 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
 In multi-tenant or production Kubernetes environments, uncontrolled container workloads can compromise cluster availability and security:
 - **Resource Exhaustion:** Workloads missing CPU/memory limits cause noisy neighbors, CPU throttling, or Out-Of-Memory (OOM-killer) node instability.
 - **Privilege Escalation & Breakout:** Containers running in privileged mode (`securityContext.privileged: true`) bypass Linux cgroups, namespaces, and AppArmor/seccomp boundaries, effectively gaining root control over the host node.
+- **Root User Execution:** Containers running as root (`UID 0`) increase the blast radius if an application is exploited, enabling unauthorized filesystem modifications and kernel access.
 
-This lab demonstrates how to enforce mandatory resource governance and block dangerous privileged containers at admission time using Kyverno before any pod is scheduled onto a node.
+This lab demonstrates how to enforce mandatory resource governance, block dangerous privileged containers, and require non-root execution at admission time using Kyverno before any pod is scheduled onto a node.
 
 ### Why Kyverno?
 - **Kubernetes-Native:** Written in declarative YAML — no custom domain-specific languages (DSLs) like Rego or Go programming required.
@@ -50,10 +53,10 @@ This lab demonstrates how to enforce mandatory resource governance and block dan
 
 - **Policy-as-Code:** Declarative policy definitions managed under version control.
 - **Standard CRD:** Uses the production-standard `kyverno.io/v1` `ClusterPolicy` resource.
-- **Pod Security Standards (Baseline & Restricted):** Blocks privileged container workloads and host root access.
+- **Pod Security Standards (Baseline & Restricted):** Blocks privileged container workloads and mandates non-root execution.
 - **Comprehensive Container Coverage:** Evaluates `spec.containers`, `spec.initContainers`, and `spec.ephemeralContainers`.
 - **Shift-Left Ready:** Policies and manifests can be validated in CI/CD pipelines before deployment to clusters.
-- **Automated Lab Runner:** Cross-platform scripts (`run-lab.sh` and `run-lab.ps1`) for one-command execution and testing.
+- **Automated Lab Runner:** Cross-platform scripts (`run-lab.sh` and `run-lab.ps1`) for one-command execution and testing across all policies.
 
 ---
 
@@ -64,9 +67,11 @@ kyverno-security-lab/
 ├── kind-config.yaml          # Kind multi-node cluster configuration (1 control plane, 1 worker)
 ├── require-limits.yaml       # Kyverno ClusterPolicy enforcing CPU & memory limits
 ├── restrict-privilege.yaml   # Kyverno ClusterPolicy restricting privileged mode containers
+├── restrict-root-user.yaml   # Kyverno ClusterPolicy enforcing runAsNonRoot: true
 ├── bad-pod.yaml              # Negative test case (violates policy, missing limits)
 ├── bad-pod-priv.yaml         # Negative test case (violates policy, requests privileged mode)
-├── good-pod.yaml             # Positive test case (conforms to policy, limits defined, non-privileged)
+├── bad-pod-root.yaml         # Negative test case (violates policy, runs as root user)
+├── good-pod.yaml             # Positive test case (conforms to all policies)
 ├── run-lab.sh                # Automated end-to-end lab script (Linux / macOS / WSL)
 ├── run-lab.ps1               # Automated end-to-end lab script (Windows PowerShell)
 └── README.md                 # Project documentation and hands-on guide
@@ -105,7 +110,7 @@ chmod +x run-lab.sh
 
 ### Script Actions & Subcommands
 Both scripts support granular subcommands:
-- `all` (default): Runs prerequisite checks, provisions the cluster, installs Kyverno, deploys all policies, and executes tests.
+- `all` (default): Runs prerequisite checks, provisions the cluster, installs Kyverno, deploys all policies, and executes all tests.
 - `up`: Provisions the Kind cluster and installs Kyverno + all security policies.
 - `test`: Executes positive and negative policy admission tests against the active cluster.
 - `down`: Cleans up test pods, removes policies, and destroys the Kind cluster.
@@ -196,14 +201,15 @@ You should see controllers running (admission controller, background controller,
 
 ### 4. Deploy the Security Policies
 
-Apply both the resource limits policy and the privileged container restriction policy:
+Apply all three security policies (limits, privileged mode restriction, root user restriction):
 
 ```bash
 kubectl apply -f require-limits.yaml
 kubectl apply -f restrict-privilege.yaml
+kubectl apply -f restrict-root-user.yaml
 ```
 
-Verify that both cluster policies are installed and ready:
+Verify that all cluster policies are installed and ready:
 
 ```bash
 kubectl get clusterpolicy
@@ -214,6 +220,7 @@ kubectl get clusterpolicy
 NAME                              ADMISSION   BACKGROUND   READY   AGE   MESSAGE
 require-cpu-memory-limits         true        true         true    10s   Ready
 restrict-privileged-containers    true        true         true    10s   Ready
+restrict-root-user                true        true         true    10s   Ready
 ```
 
 ---
@@ -229,7 +236,7 @@ kubectl apply -f bad-pod.yaml
 ```
 
 **Expected Result (Admission Blocked):**
-The admission webhook intercepts the request and blocks pod creation with a clear error:
+The admission webhook intercepts the request and blocks pod creation:
 
 ```plaintext
 Error from server: error when creating "bad-pod.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
@@ -241,25 +248,17 @@ require-cpu-memory-limits:
     for all containers. rule check-cpu-memory-limits failed at path /spec/containers/0/resources/limits/'
 ```
 
-Confirm that the pod was **not** created:
-
-```bash
-kubectl get pod test-pod-bad
-# Error from server (NotFound): pods "test-pod-bad" not found
-```
-
 ---
 
 #### Negative Test 2: Reject Privileged Container
 
-Attempt to deploy `bad-pod-priv.yaml`, which requests `securityContext.privileged: true`, root privileges, and a host filesystem mount:
+Attempt to deploy `bad-pod-priv.yaml`, which requests `securityContext.privileged: true`:
 
 ```bash
 kubectl apply -f bad-pod-priv.yaml
 ```
 
 **Expected Result (Admission Blocked):**
-The Kyverno admission controller identifies the privileged container request and rejects it:
 
 ```plaintext
 Error from server: error when creating "bad-pod-priv.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
@@ -271,18 +270,33 @@ restrict-privileged-containers:
     must not request securityContext.privileged: true. rule validate-privileged failed at path /spec/containers/0/securityContext/privileged/'
 ```
 
-Confirm that the privileged pod was **not** created:
+---
+
+#### Negative Test 3: Reject Root User Container
+
+Attempt to deploy `bad-pod-root.yaml`, which does not configure `runAsNonRoot: true`:
 
 ```bash
-kubectl get pod test-pod-hacker-priv
-# Error from server (NotFound): pods "test-pod-hacker-priv" not found
+kubectl apply -f bad-pod-root.yaml
+```
+
+**Expected Result (Admission Blocked):**
+
+```plaintext
+Error from server: error when creating "bad-pod-root.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
+
+resource Pod/default/test-pod-bad-root was blocked due to the following policies 
+
+restrict-root-user:
+  validate-non-root: 'validation error: Running as root is prohibited. Containers
+    must set securityContext.runAsNonRoot: true. rule validate-non-root failed at path /spec/containers/0/securityContext/'
 ```
 
 ---
 
 #### Positive Test: Accept Compliant Pod
 
-Deploy `good-pod.yaml`, which explicitly sets `requests` and `limits` and runs in standard unprivileged mode:
+Deploy `good-pod.yaml`, which explicitly defines resource limits, runs as non-root, and avoids privileged mode:
 
 ```bash
 kubectl apply -f good-pod.yaml
@@ -308,45 +322,25 @@ kubectl get pod test-pod-good -o jsonpath='{.spec.containers[*].resources}'
 ### Policy 1: Require Resource Limits (require-limits.yaml)
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/kyverno.io/clusterpolicy_v1.json
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: require-cpu-memory-limits
-  annotations:
-    policies.kyverno.io/title: Require CPU and Memory Limits
-    policies.kyverno.io/category: Best Practices
-    policies.kyverno.io/severity: medium
-    policies.kyverno.io/subject: Pod
-    policies.kyverno.io/description: >-
-      Containers without resource limits can monopolize cluster resources and
-      affect other workloads. This policy ensures all containers, init containers,
-      and ephemeral containers define CPU and memory limits.
 spec:
-  validationFailureAction: Enforce  # Blocks non-compliant admission requests (can also be 'Audit')
-  background: true                  # Evaluates existing cluster resources in background scans
+  validationFailureAction: Enforce
+  background: true
   rules:
     - name: check-cpu-memory-limits
       match:
         any:
           - resources:
               kinds:
-                - Pod              # Matches Pod resources during CREATE and UPDATE
+                - Pod
       validate:
         message: "CPU and memory resource limits are required for all containers."
         pattern:
           spec:
             containers:
-              - resources:
-                  limits:
-                    cpu: "?*"      # Requires a non-empty CPU limit
-                    memory: "?*"   # Requires a non-empty memory limit
-            =(initContainers):
-              - resources:
-                  limits:
-                    cpu: "?*"
-                    memory: "?*"
-            =(ephemeralContainers):
               - resources:
                   limits:
                     cpu: "?*"
@@ -358,18 +352,10 @@ spec:
 ### Policy 2: Restrict Privileged Containers (restrict-privilege.yaml)
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/kyverno.io/clusterpolicy_v1.json
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: restrict-privileged-containers
-  annotations:
-    policies.kyverno.io/title: Restrict Privileged Containers
-    policies.kyverno.io/category: Pod Security Standards (Baseline)
-    policies.kyverno.io/severity: high
-    policies.kyverno.io/description: >-
-      Privileged mode disables security mechanisms and grants full access to the host node. 
-      This policy blocks any pod attempting to run in privileged mode.
 spec:
   validationFailureAction: Enforce
   background: true
@@ -389,19 +375,33 @@ spec:
                   =(privileged): "false"
 ```
 
-### Key Policy Components
+---
 
-1. **`apiVersion: kyverno.io/v1` & `kind: ClusterPolicy`**:
-   - The production standard Kyverno resource definition, fully recognized by Kubernetes and IDE validation schemas.
-2. **`validationFailureAction: Enforce`**:
-   - `Enforce` rejects non-compliant requests at admission time.
-   - For initial rollout on live clusters, setting this to `Audit` allows reporting violations in PolicyReports without blocking deployments.
-3. **Pattern Matching (`pattern`)**:
-   - Kyverno uses declarative pattern matching to verify the structure of Kubernetes manifests.
-   - In `restrict-privilege.yaml`, the existence anchor `=(securityContext)` checks if `securityContext` is defined; if present, `=(privileged)` must be `false`.
-4. **Conditional Anchors (`=(initContainers)`, `=(ephemeralContainers)`)**:
-   - The parentheses `=(...)` denote an *existence anchor*.
-   - If `initContainers` or `ephemeralContainers` are present in the Pod spec, Kyverno enforces rules on them as well. If they are absent, the check passes.
+### Policy 3: Restrict Root User (restrict-root-user.yaml)
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-root-user
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-non-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Running as root is prohibited. Containers must set securityContext.runAsNonRoot: true."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  runAsNonRoot: true
+```
 
 ---
 
@@ -417,6 +417,10 @@ kyverno apply require-limits.yaml --resource good-pod.yaml     # Passes
 # Test privileged container restriction
 kyverno apply restrict-privilege.yaml --resource bad-pod-priv.yaml  # Fails (privileged: true)
 kyverno apply restrict-privilege.yaml --resource good-pod.yaml      # Passes
+
+# Test root user restriction
+kyverno apply restrict-root-user.yaml --resource bad-pod-root.yaml  # Fails (missing runAsNonRoot)
+kyverno apply restrict-root-user.yaml --resource good-pod.yaml      # Passes
 ```
 
 ---
@@ -449,9 +453,10 @@ When finished with the lab, clean up deployed pods or tear down the entire Kind 
 .\run-lab.ps1 -Action down # Windows PowerShell
 
 # Or manually:
-kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv --ignore-not-found
+kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root --ignore-not-found
 kubectl delete -f require-limits.yaml --ignore-not-found
 kubectl delete -f restrict-privilege.yaml --ignore-not-found
+kubectl delete -f restrict-root-user.yaml --ignore-not-found
 kind delete cluster --name kyverno-lab
 ```
 

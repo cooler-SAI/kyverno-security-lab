@@ -14,8 +14,10 @@ set -euo pipefail
 CLUSTER_NAME="kyverno-lab"
 LIMITS_POLICY="require-limits.yaml"
 PRIV_POLICY="restrict-privilege.yaml"
+ROOT_POLICY="restrict-root-user.yaml"
 BAD_POD="bad-pod.yaml"
 BAD_PRIV_POD="bad-pod-priv.yaml"
+BAD_ROOT_POD="bad-pod-root.yaml"
 GOOD_POD="good-pod.yaml"
 KIND_CONFIG="kind-config.yaml"
 
@@ -89,6 +91,8 @@ cluster_up() {
   kubectl apply -f "${LIMITS_POLICY}"
   info "Applying privilege restriction policy '${PRIV_POLICY}'..."
   kubectl apply -f "${PRIV_POLICY}"
+  info "Applying root user restriction policy '${ROOT_POLICY}'..."
+  kubectl apply -f "${ROOT_POLICY}"
   info "Waiting for policies ready state..."
   sleep 3
   kubectl get clusterpolicy
@@ -121,8 +125,18 @@ run_tests() {
     success "Negative test 2 passed! Kyverno admission webhook successfully blocked privileged container."
   fi
 
+  # Negative Test 3: Running as Root User
+  echo -e "\n${BOLD}--- Negative Test 3: Root User Container (Should be Rejected) ---${NC}"
+  info "Applying ${BAD_ROOT_POD}..."
+  if kubectl apply -f "${BAD_ROOT_POD}" 2>&1 | tee /tmp/bad-pod-root-output.txt; then
+    error "Test Failed! Pod running as root was accepted, but should have been blocked."
+    exit 1
+  else
+    success "Negative test 3 passed! Kyverno admission webhook successfully blocked container running as root."
+  fi
+
   # Positive Test: Compliant Pod
-  echo -e "\n${BOLD}--- Positive Test: Compliant Pod With Limits (Should be Accepted) ---${NC}"
+  echo -e "\n${BOLD}--- Positive Test: Compliant Pod (Should be Accepted) ---${NC}"
   info "Cleaning up previous good-pod if any..."
   kubectl delete pod test-pod-good --ignore-not-found >/dev/null 2>&1 || true
 
@@ -147,11 +161,12 @@ run_tests() {
 cluster_down() {
   header "Cleaning up and Tearing Down Cluster"
   info "Deleting test pods..."
-  kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv --ignore-not-found 2>/dev/null || true
+  kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root --ignore-not-found 2>/dev/null || true
 
   info "Deleting Kyverno cluster policies..."
   kubectl delete -f "${LIMITS_POLICY}" --ignore-not-found 2>/dev/null || true
   kubectl delete -f "${PRIV_POLICY}" --ignore-not-found 2>/dev/null || true
+  kubectl delete -f "${ROOT_POLICY}" --ignore-not-found 2>/dev/null || true
 
   info "Deleting Kind cluster '${CLUSTER_NAME}'..."
   kind delete cluster --name "${CLUSTER_NAME}"
