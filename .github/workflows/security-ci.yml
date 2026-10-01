@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Kyverno CLI
-        uses: kyverno/action-install-cli@v0.4.0
+        uses: kyverno/action-install-cli@v0.2.0
 
       - name: Run Kyverno Test Suite
         run: |
@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy IaC / Config Scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'config'
           scan-ref: '.'
@@ -44,7 +44,7 @@ jobs:
           severity: 'HIGH,CRITICAL'
 
       - name: Generate Trivy SARIF Report
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'config'
           scan-ref: '.'
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run Trivy Image Vulnerability Scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'nginxinc/nginx-unprivileged:alpine'
           format: 'table'
