@@ -1,6 +1,6 @@
 # Kyverno Security Lab
 
-A hands-on, practical lab for implementing Kubernetes cluster security and governance using Policy-as-Code with **Kyverno**. This project demonstrates policy enforcement using the standard, Kubernetes-native Kyverno `ClusterPolicy` (`kyverno.io/v1`).
+A hands-on, practical lab for implementing Kubernetes cluster security and governance using Policy-as-Code with **Kyverno**. This project demonstrates policy enforcement and automated resource mutation using standard, Kubernetes-native Kyverno `ClusterPolicy` (`kyverno.io/v1`).
 
 ---
 
@@ -16,15 +16,17 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
   - [2. Install Kyverno via Helm](#2-install-kyverno-via-helm)
   - [3. Verify Kyverno Deployment](#3-verify-kyverno-deployment)
   - [4. Deploy the Security Policies](#4-deploy-the-security-policies)
-  - [5. Test Policy Enforcement](#5-test-policy-enforcement)
+  - [5. Test Policy Enforcement & Mutation](#5-test-policy-enforcement--mutation)
     - [Negative Test 1: Reject Pod Without Limits](#negative-test-1-reject-pod-without-limits)
     - [Negative Test 2: Reject Privileged Container](#negative-test-2-reject-privileged-container)
     - [Negative Test 3: Reject Root User Container](#negative-test-3-reject-root-user-container)
+    - [Mutation Test: Auto-Inject Security Defaults & Labels](#mutation-test-auto-inject-security-defaults--labels)
     - [Positive Test: Accept Compliant Pod](#positive-test-accept-compliant-pod)
 - [Policy Deep Dive: ClusterPolicy](#policy-deep-dive-clusterpolicy)
   - [Policy 1: Require Resource Limits (require-limits.yaml)](#policy-1-require-resource-limits-require-limitsyaml)
   - [Policy 2: Restrict Privileged Containers (restrict-privilege.yaml)](#policy-2-restrict-privileged-containers-restrict-privilegeyaml)
   - [Policy 3: Restrict Root User (restrict-root-user.yaml)](#policy-3-restrict-root-user-restrict-root-useryaml)
+  - [Policy 4: Auto-Inject Security Defaults (mutate-security-context.yaml)](#policy-4-auto-inject-security-defaults-mutate-security-contextyaml)
 - [Testing with Kyverno CLI (Shift-Left / CI/CD)](#testing-with-kyverno-cli-shift-left--cicd)
 - [Troubleshooting & Verification](#troubleshooting--verification)
 - [Cleanup](#cleanup)
@@ -37,15 +39,16 @@ A hands-on, practical lab for implementing Kubernetes cluster security and gover
 In multi-tenant or production Kubernetes environments, uncontrolled container workloads can compromise cluster availability and security:
 - **Resource Exhaustion:** Workloads missing CPU/memory limits cause noisy neighbors, CPU throttling, or Out-Of-Memory (OOM-killer) node instability.
 - **Privilege Escalation & Breakout:** Containers running in privileged mode (`securityContext.privileged: true`) bypass Linux cgroups, namespaces, and AppArmor/seccomp boundaries, effectively gaining root control over the host node.
-- **Root User Execution:** Containers running as root (`UID 0`) increase the blast radius if an application is exploited, enabling unauthorized filesystem modifications and kernel access.
+- **Root User Execution:** Containers running as root (`UID 0`) increase the blast radius if an application is compromised.
+- **Inconsistent Baseline Hardening:** Developers may omit security flags like `allowPrivilegeEscalation: false` or compliance labels, creating governance gaps.
 
-This lab demonstrates how to enforce mandatory resource governance, block dangerous privileged containers, and require non-root execution at admission time using Kyverno before any pod is scheduled onto a node.
+This lab demonstrates how to enforce mandatory resource governance, block dangerous privileged containers, and automatically mutate workloads at admission time to inject security defaults using Kyverno.
 
 ### Why Kyverno?
 - **Kubernetes-Native:** Written in declarative YAML — no custom domain-specific languages (DSLs) like Rego or Go programming required.
-- **Pattern Matching:** Simple, intuitive declarative patterns to validate Kubernetes object structures.
+- **Pattern Matching & Mutation:** Intuitive declarative overlays to validate, mutate, generate, or clean up Kubernetes resources.
 - **Flexible Actions:** Supports both auditing (`Audit`) and active admission enforcement (`Enforce`).
-- **Comprehensive Lifecycle:** Validates, mutates, generates, and cleans up Kubernetes resources.
+- **Comprehensive Lifecycle:** Validates incoming manifests and provides self-healing mutations out of the box.
 
 ---
 
@@ -53,6 +56,7 @@ This lab demonstrates how to enforce mandatory resource governance, block danger
 
 - **Policy-as-Code:** Declarative policy definitions managed under version control.
 - **Standard CRD:** Uses the production-standard `kyverno.io/v1` `ClusterPolicy` resource.
+- **Validation & Mutation Engines:** Combines admission blocking rules (`validate`) with automated manifest self-healing (`mutate`).
 - **Pod Security Standards (Baseline & Restricted):** Blocks privileged container workloads and mandates non-root execution.
 - **Comprehensive Container Coverage:** Evaluates `spec.containers`, `spec.initContainers`, and `spec.ephemeralContainers`.
 - **Shift-Left Ready:** Policies and manifests can be validated in CI/CD pipelines before deployment to clusters.
@@ -64,17 +68,19 @@ This lab demonstrates how to enforce mandatory resource governance, block danger
 
 ```plaintext
 kyverno-security-lab/
-├── kind-config.yaml          # Kind multi-node cluster configuration (1 control plane, 1 worker)
-├── require-limits.yaml       # Kyverno ClusterPolicy enforcing CPU & memory limits
-├── restrict-privilege.yaml   # Kyverno ClusterPolicy restricting privileged mode containers
-├── restrict-root-user.yaml   # Kyverno ClusterPolicy enforcing runAsNonRoot: true
-├── bad-pod.yaml              # Negative test case (violates policy, missing limits)
-├── bad-pod-priv.yaml         # Negative test case (violates policy, requests privileged mode)
-├── bad-pod-root.yaml         # Negative test case (violates policy, runs as root user)
-├── good-pod.yaml             # Positive test case (conforms to all policies)
-├── run-lab.sh                # Automated end-to-end lab script (Linux / macOS / WSL)
-├── run-lab.ps1               # Automated end-to-end lab script (Windows PowerShell)
-└── README.md                 # Project documentation and hands-on guide
+├── kind-config.yaml              # Kind multi-node cluster configuration (1 control plane, 1 worker)
+├── require-limits.yaml           # Kyverno ClusterPolicy enforcing CPU & memory limits
+├── restrict-privilege.yaml       # Kyverno ClusterPolicy restricting privileged mode containers
+├── restrict-root-user.yaml       # Kyverno ClusterPolicy enforcing runAsNonRoot: true
+├── mutate-security-context.yaml  # Kyverno ClusterPolicy auto-injecting security defaults & audit labels
+├── bad-pod.yaml                  # Negative test case (violates policy, missing limits)
+├── bad-pod-priv.yaml             # Negative test case (violates policy, requests privileged mode)
+├── bad-pod-root.yaml             # Negative test case (violates policy, runs as root user)
+├── mutate-pod.yaml               # Mutation test case (omits security defaults to verify auto-injection)
+├── good-pod.yaml                 # Positive test case (conforms to all policies)
+├── run-lab.sh                    # Automated end-to-end lab script (Linux / macOS / WSL)
+├── run-lab.ps1                   # Automated end-to-end lab script (Windows PowerShell)
+└── README.md                     # Project documentation and hands-on guide
 ```
 
 ---
@@ -95,7 +101,7 @@ Before starting, ensure you have the following tools installed:
 
 ## Quick Start (Automated Lab)
 
-If you have all prerequisites installed and Docker running, you can execute the entire lab end-to-end (cluster creation, Kyverno installation, policy deployment, and positive/negative testing) using a single command:
+If you have all prerequisites installed and Docker running, you can execute the entire lab end-to-end (cluster creation, Kyverno installation, policy deployment, and negative/mutation/positive testing) using a single command:
 
 ### Linux / macOS / WSL
 ```bash
@@ -112,7 +118,7 @@ chmod +x run-lab.sh
 Both scripts support granular subcommands:
 - `all` (default): Runs prerequisite checks, provisions the cluster, installs Kyverno, deploys all policies, and executes all tests.
 - `up`: Provisions the Kind cluster and installs Kyverno + all security policies.
-- `test`: Executes positive and negative policy admission tests against the active cluster.
+- `test`: Executes negative, mutation, and positive tests against the active cluster.
 - `down`: Cleans up test pods, removes policies, and destroys the Kind cluster.
 
 *Example on Linux/macOS:*
@@ -201,12 +207,13 @@ You should see controllers running (admission controller, background controller,
 
 ### 4. Deploy the Security Policies
 
-Apply all three security policies (limits, privileged mode restriction, root user restriction):
+Apply all four policies (three validation policies and one mutation policy):
 
 ```bash
 kubectl apply -f require-limits.yaml
 kubectl apply -f restrict-privilege.yaml
 kubectl apply -f restrict-root-user.yaml
+kubectl apply -f mutate-security-context.yaml
 ```
 
 Verify that all cluster policies are installed and ready:
@@ -218,6 +225,7 @@ kubectl get clusterpolicy
 *Expected output:*
 ```plaintext
 NAME                              ADMISSION   BACKGROUND   READY   AGE   MESSAGE
+mutate-pod-security-defaults      true        false        true    10s   Ready
 require-cpu-memory-limits         true        true         true    10s   Ready
 restrict-privileged-containers    true        true         true    10s   Ready
 restrict-root-user                true        true         true    10s   Ready
@@ -225,7 +233,7 @@ restrict-root-user                true        true         true    10s   Ready
 
 ---
 
-### 5. Test Policy Enforcement
+### 5. Test Policy Enforcement & Mutation
 
 #### Negative Test 1: Reject Pod Without Limits
 
@@ -290,6 +298,32 @@ resource Pod/default/test-pod-bad-root was blocked due to the following policies
 restrict-root-user:
   validate-non-root: 'validation error: Running as root is prohibited. Containers
     must set securityContext.runAsNonRoot: true. rule validate-non-root failed at path /spec/containers/0/securityContext/'
+```
+
+---
+
+#### Mutation Test: Auto-Inject Security Defaults & Labels
+
+Deploy `mutate-pod.yaml`, which defines resource limits and non-root execution, but intentionally omits `allowPrivilegeEscalation` and the hardening label:
+
+```bash
+kubectl apply -f mutate-pod.yaml
+```
+
+**Expected Result (Admission Accepted & Auto-Mutated):**
+
+```plaintext
+pod/test-pod-mutate created
+```
+
+Inspect the live pod to verify that Kyverno injected the governance label and security default:
+
+```bash
+kubectl get pod test-pod-mutate -o jsonpath='{.metadata.labels.security\.kyverno\.io/hardened}'
+# Output: true
+
+kubectl get pod test-pod-mutate -o jsonpath='{.spec.containers[0].securityContext.allowPrivilegeEscalation}'
+# Output: false
 ```
 
 ---
@@ -405,6 +439,54 @@ spec:
 
 ---
 
+### Policy 4: Auto-Inject Security Defaults (mutate-security-context.yaml)
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-pod-security-defaults
+spec:
+  background: false
+  rules:
+    - name: inject-audit-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              +(security.kyverno.io/hardened): "true"
+
+    - name: inject-allow-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      mutate:
+        patchStrategicMerge:
+          spec:
+            containers:
+              - (name): "*"
+                securityContext:
+                  +(allowPrivilegeEscalation): false
+```
+
+### Key Mutation Concepts
+
+1. **`patchStrategicMerge`**:
+   - Merges declarative snippets directly into the target resource.
+2. **Conditional Anchor `(name): "*"`**:
+   - Matches every container in the `containers` array regardless of its name.
+3. **Addition Anchor `+(field): value`**:
+   - Injects the specified field and value **only if it does not already exist**. If the workload already defines `allowPrivilegeEscalation`, Kyverno preserves the author's explicit configuration.
+
+---
+
 ## Testing with Kyverno CLI (Shift-Left / CI/CD)
 
 You can validate manifests against Kyverno policies locally or in continuous integration pipelines without deploying a live Kubernetes cluster:
@@ -421,6 +503,9 @@ kyverno apply restrict-privilege.yaml --resource good-pod.yaml      # Passes
 # Test root user restriction
 kyverno apply restrict-root-user.yaml --resource bad-pod-root.yaml  # Fails (missing runAsNonRoot)
 kyverno apply restrict-root-user.yaml --resource good-pod.yaml      # Passes
+
+# Test mutation policy (applies mutation and prints mutated manifest)
+kyverno apply mutate-security-context.yaml --resource mutate-pod.yaml
 ```
 
 ---
@@ -436,8 +521,9 @@ kyverno apply restrict-root-user.yaml --resource good-pod.yaml      # Passes
   kubectl get clusterpolicyreport -A
   kubectl describe clusterpolicyreport
   ```
-- **Check Validating Webhook Configurations:**
+- **Check Mutating and Validating Webhook Configurations:**
   ```bash
+  kubectl get mutatingwebhookconfigurations
   kubectl get validatingwebhookconfigurations
   ```
 
@@ -453,10 +539,11 @@ When finished with the lab, clean up deployed pods or tear down the entire Kind 
 .\run-lab.ps1 -Action down # Windows PowerShell
 
 # Or manually:
-kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root --ignore-not-found
+kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root test-pod-mutate --ignore-not-found
 kubectl delete -f require-limits.yaml --ignore-not-found
 kubectl delete -f restrict-privilege.yaml --ignore-not-found
 kubectl delete -f restrict-root-user.yaml --ignore-not-found
+kubectl delete -f mutate-security-context.yaml --ignore-not-found
 kind delete cluster --name kyverno-lab
 ```
 
@@ -464,11 +551,12 @@ kind delete cluster --name kyverno-lab
 
 ## Best Practices & Next Steps
 
-1. **Enforce Requests alongside Limits:** Prevent node overcommitment by pairing limits with guaranteed requests.
-2. **Disallow Privileged Containers:** Ensure `securityContext.privileged: false` is enforced across all workloads.
-3. **Prevent Root Users:** Require containers to run as non-root (`runAsNonRoot: true`).
-4. **Disallow `:latest` Image Tags:** Enforce immutable image tags or SHA256 digests in manifests.
-5. **Gradual Rollout:** Deploy new policies with `validationFailureAction: Audit` first to assess impact before switching to `Enforce`.
+1. **Pair Mutation with Validation:** Auto-inject secure defaults at admission, while retaining strict validation rules for critical boundaries.
+2. **Enforce Requests alongside Limits:** Prevent node overcommitment by pairing limits with guaranteed requests.
+3. **Disallow Privileged Containers:** Ensure `securityContext.privileged: false` is enforced across all workloads.
+4. **Prevent Root Users:** Require containers to run as non-root (`runAsNonRoot: true`).
+5. **Disallow `:latest` Image Tags:** Enforce immutable image tags or SHA256 digests in manifests.
+6. **Gradual Rollout:** Deploy new policies with `validationFailureAction: Audit` first to assess impact before switching to `Enforce`.
 
 ---
 

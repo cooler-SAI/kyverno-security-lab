@@ -5,7 +5,7 @@
 # Usage:
 #   ./run-lab.sh          # Runs the full lab end-to-end (cluster, kyverno, tests)
 #   ./run-lab.sh up       # Provisions the cluster and deploys Kyverno + Policies
-#   ./run-lab.sh test     # Runs negative & positive tests against the cluster
+#   ./run-lab.sh test     # Runs negative, positive, and mutation tests
 #   ./run-lab.sh down     # Tears down the cluster and cleans up resources
 # ==============================================================================
 
@@ -15,10 +15,12 @@ CLUSTER_NAME="kyverno-lab"
 LIMITS_POLICY="require-limits.yaml"
 PRIV_POLICY="restrict-privilege.yaml"
 ROOT_POLICY="restrict-root-user.yaml"
+MUTATE_POLICY="mutate-security-context.yaml"
 BAD_POD="bad-pod.yaml"
 BAD_PRIV_POD="bad-pod-priv.yaml"
 BAD_ROOT_POD="bad-pod-root.yaml"
 GOOD_POD="good-pod.yaml"
+MUTATE_POD="mutate-pod.yaml"
 KIND_CONFIG="kind-config.yaml"
 
 # Styling / Colors
@@ -93,6 +95,8 @@ cluster_up() {
   kubectl apply -f "${PRIV_POLICY}"
   info "Applying root user restriction policy '${ROOT_POLICY}'..."
   kubectl apply -f "${ROOT_POLICY}"
+  info "Applying security mutation policy '${MUTATE_POLICY}'..."
+  kubectl apply -f "${MUTATE_POLICY}"
   info "Waiting for policies ready state..."
   sleep 3
   kubectl get clusterpolicy
@@ -135,6 +139,32 @@ run_tests() {
     success "Negative test 3 passed! Kyverno admission webhook successfully blocked container running as root."
   fi
 
+  # Mutation Test: Auto-injection of Security Defaults
+  echo -e "\n${BOLD}--- Mutation Test: Pod Security Auto-Injection (Should be Mutated) ---${NC}"
+  info "Cleaning up previous test-pod-mutate if any..."
+  kubectl delete pod test-pod-mutate --ignore-not-found >/dev/null 2>&1 || true
+
+  info "Applying ${MUTATE_POD}..."
+  if kubectl apply -f "${MUTATE_POD}"; then
+    success "Pod creation accepted! Inspecting Kyverno mutations..."
+    local injected_label
+    injected_label=$(kubectl get pod test-pod-mutate -o jsonpath='{.metadata.labels.security\.kyverno\.io/hardened}' 2>/dev/null || echo "")
+    local injected_escalation
+    injected_escalation=$(kubectl get pod test-pod-mutate -o jsonpath='{.spec.containers[0].securityContext.allowPrivilegeEscalation}' 2>/dev/null || echo "")
+
+    info "Injected label 'security.kyverno.io/hardened': ${injected_label}"
+    info "Injected container 'allowPrivilegeEscalation': ${injected_escalation}"
+
+    if [ "${injected_label}" = "true" ] && [ "${injected_escalation}" = "false" ]; then
+      success "Mutation test passed! Kyverno successfully auto-injected audit labels and security context defaults."
+    else
+      warn "Mutation partially applied or unexpected values: label='${injected_label}', allowPrivilegeEscalation='${injected_escalation}'"
+    fi
+  else
+    error "Test Failed! Mutation test pod was unexpectedly blocked."
+    exit 1
+  fi
+
   # Positive Test: Compliant Pod
   echo -e "\n${BOLD}--- Positive Test: Compliant Pod (Should be Accepted) ---${NC}"
   info "Cleaning up previous good-pod if any..."
@@ -161,12 +191,13 @@ run_tests() {
 cluster_down() {
   header "Cleaning up and Tearing Down Cluster"
   info "Deleting test pods..."
-  kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root --ignore-not-found 2>/dev/null || true
+  kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv test-pod-bad-root test-pod-mutate --ignore-not-found 2>/dev/null || true
 
   info "Deleting Kyverno cluster policies..."
   kubectl delete -f "${LIMITS_POLICY}" --ignore-not-found 2>/dev/null || true
   kubectl delete -f "${PRIV_POLICY}" --ignore-not-found 2>/dev/null || true
   kubectl delete -f "${ROOT_POLICY}" --ignore-not-found 2>/dev/null || true
+  kubectl delete -f "${MUTATE_POLICY}" --ignore-not-found 2>/dev/null || true
 
   info "Deleting Kind cluster '${CLUSTER_NAME}'..."
   kind delete cluster --name "${CLUSTER_NAME}"
