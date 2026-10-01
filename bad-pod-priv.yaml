@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.28.0/pod-v1.json
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod-hacker-priv
+  labels:
+    app.kubernetes.io/name: test-pod-hacker-priv
+    security.lab/role: exploit-demo
+    security.lab/threat-vector: container-escape
+  annotations:
+    description: >-
+      Simulated penetration-test workload attempting to run in privileged mode
+      with host device access, root UID, and broad Linux capabilities. Designed
+      to verify admission denial by Kyverno's 'restrict-privileged-containers' policy.
+    security.kyverno.io/expected-result: "Blocked by Kyverno admission webhook (403 Forbidden)"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: hacker-container
+      image: alpine:3.19
+      # Demonstration entrypoint probing host access and kernel devices
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== [SECURITY WARNING] Privileged Pod Executed ==="
+          echo "[+] Current User / UID:"
+          id
+          echo "[+] Host devices visible via privileged container:"
+          ls -la /dev | head -n 15
+          echo "[+] Mounting and inspecting host root filesystem:"
+          ls -la /host | head -n 10
+          echo "[+] Simulation running... sleeping for testing."
+          sleep 3600
+      securityContext:
+        privileged: true                 # <-- Triggers rejection in restrict-privilege.yaml
+        allowPrivilegeEscalation: true   # Allows child processes to escalate privileges
+        readOnlyRootFilesystem: false    # Writable root filesystem enables dropping payloads
+        runAsNonRoot: false              # Explicitly runs as root (UID 0)
+        runAsUser: 0
+        capabilities:
+          add:
+            - SYS_ADMIN                  # Powerful capability enabling mount manipulation & namespace breakout
+            - NET_ADMIN                  # Network sniffing and firewall manipulation
+      
+      # Resource requests & limits defined so this pod satisfies 'require-limits.yaml',
+      # ensuring isolation of test results specifically for the privileged-mode policy.
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "32Mi"
+        limits:
+          cpu: "100m"
+          memory: "64Mi"
+
+      # Host filesystem mount demonstrating container escape impact if privileged mode is granted
+      volumeMounts:
+        - name: host-root
+          mountPath: /host
+          readOnly: false
+
+  volumes:
+    - name: host-root
+      hostPath:
+        path: /
+        type: Directory
