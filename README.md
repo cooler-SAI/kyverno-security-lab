@@ -10,10 +10,14 @@ A hands-on, enterprise-grade lab for implementing Kubernetes cluster security, g
 - [Enterprise DevSecOps Architecture](#enterprise-devsecops-architecture)
 - [Key Features](#key-features)
 - [Repository Structure](#repository-structure)
-- [Prerequisites](#prerequisites)
+- [Prerequisites & CLI Installation](#prerequisites--cli-installation)
+  - [Installing Kyverno CLI](#installing-kyverno-cli)
+  - [Installing Trivy](#installing-trivy)
 - [Quick Start (Automated Lab)](#quick-start-automated-lab)
 - [Local Shift-Left Security Scans (Trivy & Kyverno CLI)](#local-shift-left-security-scans-trivy--kyverno-cli)
 - [GitHub Actions CI/CD Pipeline](#github-actions-cicd-pipeline)
+  - [Workflow Jobs Breakdown](#workflow-jobs-breakdown)
+  - [Continuous Security in Action](#continuous-security-in-action)
 - [Step-by-Step Lab Walkthrough](#step-by-step-lab-walkthrough)
   - [1. Provision Local Cluster with Kind](#1-provision-local-cluster-with-kind)
   - [2. Install Kyverno via Helm](#2-install-kyverno-via-helm)
@@ -31,6 +35,8 @@ A hands-on, enterprise-grade lab for implementing Kubernetes cluster security, g
   - [Policy 3: Restrict Root User (restrict-root-user.yaml)](#policy-3-restrict-root-user-restrict-root-useryaml)
   - [Policy 4: Auto-Inject Security Defaults (mutate-security-context.yaml)](#policy-4-auto-inject-security-defaults-mutate-security-contextyaml)
 - [Testing with Kyverno CLI (Shift-Left / CI/CD)](#testing-with-kyverno-cli-shift-left--cicd)
+  - [Running the Declarative Test Suite](#running-the-declarative-test-suite)
+  - [Single Policy Ad-Hoc Evaluation](#single-policy-ad-hoc-evaluation)
 - [Troubleshooting & Verification](#troubleshooting--verification)
 - [Cleanup](#cleanup)
 - [Best Practices & Next Steps](#best-practices--next-steps)
@@ -118,9 +124,9 @@ kyverno-security-lab/
 
 ---
 
-## Prerequisites
+## Prerequisites & CLI Installation
 
-Before starting, ensure you have the following tools installed:
+### Core Tools
 
 | Tool | Recommended Version | Purpose |
 | :--- | :--- | :--- |
@@ -128,8 +134,38 @@ Before starting, ensure you have the following tools installed:
 | [Kind](https://kind.sigs.k8s.io/) | `>= 0.20` | Local multi-node Kubernetes cluster management |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | `>= 1.28` | Kubernetes CLI |
 | [Helm](https://helm.sh/) | `>= 3.12` | Kubernetes package manager for Kyverno installation |
-| [Kyverno CLI](https://kyverno.io/docs/kyverno-cli/) | `>= 1.12` | Offline policy testing in CI/CD and locally |
-| [Trivy](https://aquasecurity.github.io/trivy/) | `>= 0.50` | IaC misconfiguration and container image CVE scanning |
+
+### Installing Kyverno CLI
+
+The Kyverno CLI (`kyverno`) enables local and CI/CD policy testing without a Kubernetes cluster:
+
+- **Windows (Scoop):**
+  ```powershell
+  scoop install kyverno-cli
+  ```
+- **Windows (Winget):**
+  ```powershell
+  winget install Kyverno.kyverno
+  ```
+- **macOS / Linux (Homebrew):**
+  ```bash
+  brew install kyverno
+  ```
+- **Direct Binary (GitHub Releases):**
+  Download the pre-compiled binary directly from [Kyverno Releases](https://github.com/kyverno/kyverno/releases).
+
+### Installing Trivy
+
+Trivy provides static vulnerability and IaC misconfiguration scanning:
+
+- **Windows (Scoop):**
+  ```powershell
+  scoop install trivy
+  ```
+- **macOS / Linux (Homebrew):**
+  ```bash
+  brew install trivy
+  ```
 
 ---
 
@@ -140,6 +176,10 @@ You can run comprehensive pre-commit security audits on your machine without sta
 ### On Windows (PowerShell)
 ```powershell
 .\scan.ps1
+```
+*To skip container image scanning and run only IaC / policy checks:*
+```powershell
+.\scan.ps1 -SkipImageScan
 ```
 
 ### On Linux / macOS / WSL
@@ -157,11 +197,37 @@ chmod +x scan.sh
 
 ## GitHub Actions CI/CD Pipeline
 
-The repository includes a ready-to-use GitHub Actions workflow located at [`.github/workflows/security-ci.yml`](.github/workflows/security-ci.yml):
+The repository includes an automated enterprise GitHub Actions workflow located at [`.github/workflows/security-ci.yml`](.github/workflows/security-ci.yml).
 
-- **Job 1: `kyverno-test`**: Installs Kyverno CLI and executes `kyverno test .` on every push and pull request.
-- **Job 2: `trivy-iac-scan`**: Scans manifests for security misconfigurations and uploads a SARIF report to GitHub Advanced Security.
-- **Job 3: `trivy-image-scan`**: Scans target container images for HIGH and CRITICAL CVE vulnerabilities.
+### Workflow Triggers
+- Automatic execution on every `push` to branch `main`.
+- Automatic execution on all `pull_request` events targeting `main`.
+- Manual on-demand execution via `workflow_dispatch`.
+
+### Workflow Jobs Breakdown
+
+```mermaid
+flowchart LR
+    A["Push / Pull Request"] --> B["Job: Kyverno Unit Tests"]
+    A --> C["Job: Trivy IaC Scan"]
+    A --> D["Job: Trivy Image Scan"]
+
+    B --> B1["Install Kyverno CLI<br/>kyverno test ."]
+    C --> C1["Scan Manifests<br/>Export SARIF Report"]
+    C1 --> C2["Upload to GitHub Security Tab"]
+    D --> D1["Scan nginx-unprivileged:alpine<br/>Check High/Crit CVEs"]
+```
+
+1. **`kyverno-test`**:
+   - Uses `kyverno/action-install-cli@v0.4.0` to set up the official Kyverno binary on Ubuntu runners.
+   - Runs `kyverno test .` against `kyverno-test.yaml`.
+   - Validates that non-compliant manifests are rejected and compliant manifests pass.
+2. **`trivy-iac-scan`**:
+   - Uses `aquasecurity/trivy-action@master` to perform IaC misconfiguration scanning on the repository.
+   - Generates a standard `trivy-iac-results.sarif` report.
+   - Automatically uploads the SARIF report to the GitHub **Security -> Code Scanning** dashboard.
+3. **`trivy-image-scan`**:
+   - Scans the compliant container image (`nginxinc/nginx-unprivileged:alpine`) for HIGH and CRITICAL vulnerabilities, ensuring supply-chain hygiene.
 
 ---
 
@@ -502,14 +568,39 @@ spec:
 
 ## Testing with Kyverno CLI (Shift-Left / CI/CD)
 
-### Native Declarative Test Suite (`kyverno test`)
-The repository includes a declarative test suite in `kyverno-test.yaml`. Run all tests with a single command:
+### Running the Declarative Test Suite (`kyverno test`)
+
+The repository includes a declarative test suite in `kyverno-test.yaml`. Once the Kyverno CLI is installed, simply run:
 
 ```bash
 kyverno test .
 ```
 
+> **Note:** Do **not** append filenames like `using kyverno-test.yaml`. The CLI automatically detects the `kyverno-test.yaml` file in the current working directory (`.`).
+
+*Expected output:*
+```plaintext
+Executing kyverno-security-lab-tests...
+applying 4 policies to 5 resources...
+
+│───│───────────────────────────────│─────────────────────────│──────────────│────────│
+│ # │ POLICY                        │ RULE                    │ RESOURCE     │ RESULT │
+│───│───────────────────────────────│─────────────────────────│──────────────│────────│
+│ 1 │ require-cpu-memory-limits     │ check-cpu-memory-limits │ test-pod-bad │ Pass   │
+│ 2 │ require-cpu-memory-limits     │ check-cpu-memory-limits │ test-pod-good│ Pass   │
+│ 3 │ restrict-privileged-containers│ validate-privileged     │ test-pod-hack│ Pass   │
+│ 4 │ restrict-privileged-containers│ validate-privileged     │ test-pod-good│ Pass   │
+│ 5 │ restrict-root-user            │ validate-non-root       │ test-pod-bad-│ Pass   │
+│ 6 │ restrict-root-user            │ validate-non-root       │ test-pod-good│ Pass   │
+│ 7 │ mutate-pod-security-defaults  │ inject-audit-label      │ test-pod-muta│ Pass   │
+│ 8 │ mutate-pod-security-defaults  │ inject-allow-privilege- │ test-pod-muta│ Pass   │
+│───│───────────────────────────────│─────────────────────────│──────────────│────────│
+```
+
+---
+
 ### Single Policy Ad-Hoc Evaluation
+
 You can also evaluate individual policies against specific manifests:
 
 ```bash
