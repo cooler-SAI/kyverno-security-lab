@@ -4,16 +4,18 @@
 # ==============================================================================
 # Usage:
 #   ./run-lab.sh          # Runs the full lab end-to-end (cluster, kyverno, tests)
-#   ./run-lab.sh up       # Provisions the cluster and deploys Kyverno + Policy
+#   ./run-lab.sh up       # Provisions the cluster and deploys Kyverno + Policies
 #   ./run-lab.sh test     # Runs negative & positive tests against the cluster
-#   ./run-lab.sh down     # Tears down the cluster and clean up resources
+#   ./run-lab.sh down     # Tears down the cluster and cleans up resources
 # ==============================================================================
 
 set -euo pipefail
 
 CLUSTER_NAME="kyverno-lab"
-POLICY_FILE="require-limits.yaml"
+LIMITS_POLICY="require-limits.yaml"
+PRIV_POLICY="restrict-privilege.yaml"
 BAD_POD="bad-pod.yaml"
+BAD_PRIV_POD="bad-pod-priv.yaml"
 GOOD_POD="good-pod.yaml"
 KIND_CONFIG="kind-config.yaml"
 
@@ -82,12 +84,15 @@ cluster_up() {
     --timeout=180s
   success "Kyverno controllers are running and ready."
 
-  header "3. Deploying Kyverno ClusterPolicy"
-  kubectl apply -f "${POLICY_FILE}"
-  info "Waiting for policy ready state..."
+  header "3. Deploying Kyverno ClusterPolicies"
+  info "Applying limits policy '${LIMITS_POLICY}'..."
+  kubectl apply -f "${LIMITS_POLICY}"
+  info "Applying privilege restriction policy '${PRIV_POLICY}'..."
+  kubectl apply -f "${PRIV_POLICY}"
+  info "Waiting for policies ready state..."
   sleep 3
   kubectl get clusterpolicy
-  success "Security policy '${POLICY_FILE}' applied successfully."
+  success "Security policies applied successfully."
 }
 
 run_tests() {
@@ -96,17 +101,27 @@ run_tests() {
   info "Ensuring context is set to kind-${CLUSTER_NAME}..."
   kubectl config use-context "kind-${CLUSTER_NAME}"
 
-  # Negative Test
-  echo -e "\n${BOLD}--- Negative Test: Pod Without Limits (Should be Rejected) ---${NC}"
+  # Negative Test 1: Missing Limits
+  echo -e "\n${BOLD}--- Negative Test 1: Pod Without Limits (Should be Rejected) ---${NC}"
   info "Applying ${BAD_POD}..."
   if kubectl apply -f "${BAD_POD}" 2>&1 | tee /tmp/bad-pod-output.txt; then
     error "Test Failed! Non-compliant pod was accepted, but should have been blocked."
     exit 1
   else
-    success "Negative test passed! Kyverno admission webhook successfully blocked the non-compliant pod."
+    success "Negative test 1 passed! Kyverno admission webhook successfully blocked pod missing limits."
   fi
 
-  # Positive Test
+  # Negative Test 2: Privileged Container Request
+  echo -e "\n${BOLD}--- Negative Test 2: Privileged Container (Should be Rejected) ---${NC}"
+  info "Applying ${BAD_PRIV_POD}..."
+  if kubectl apply -f "${BAD_PRIV_POD}" 2>&1 | tee /tmp/bad-pod-priv-output.txt; then
+    error "Test Failed! Privileged pod was accepted, but should have been blocked."
+    exit 1
+  else
+    success "Negative test 2 passed! Kyverno admission webhook successfully blocked privileged container."
+  fi
+
+  # Positive Test: Compliant Pod
   echo -e "\n${BOLD}--- Positive Test: Compliant Pod With Limits (Should be Accepted) ---${NC}"
   info "Cleaning up previous good-pod if any..."
   kubectl delete pod test-pod-good --ignore-not-found >/dev/null 2>&1 || true
@@ -131,11 +146,12 @@ run_tests() {
 
 cluster_down() {
   header "Cleaning up and Tearing Down Cluster"
-  info "Deleting test pod..."
-  kubectl delete pod test-pod-good --ignore-not-found 2>/dev/null || true
+  info "Deleting test pods..."
+  kubectl delete pod test-pod-good test-pod-bad test-pod-hacker-priv --ignore-not-found 2>/dev/null || true
 
-  info "Deleting Kyverno cluster policy..."
-  kubectl delete -f "${POLICY_FILE}" --ignore-not-found 2>/dev/null || true
+  info "Deleting Kyverno cluster policies..."
+  kubectl delete -f "${LIMITS_POLICY}" --ignore-not-found 2>/dev/null || true
+  kubectl delete -f "${PRIV_POLICY}" --ignore-not-found 2>/dev/null || true
 
   info "Deleting Kind cluster '${CLUSTER_NAME}'..."
   kind delete cluster --name "${CLUSTER_NAME}"
