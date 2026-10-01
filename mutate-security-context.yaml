@@ -9,9 +9,7 @@ metadata:
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Demonstrates Kyverno's mutation engine. Automatically injects compliance
-      governance labels and injects securityContext defaults (allowPrivilegeEscalation: false)
-      into containers if omitted from the incoming manifest.
+      Automatically injects compliance governance labels and securityContext defaults.
 spec:
   background: false
   rules:

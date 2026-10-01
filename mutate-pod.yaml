@@ -3,20 +3,15 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: test-pod-mutate
+  namespace: default
   labels:
     app.kubernetes.io/name: test-pod-mutate
     security.lab/role: mutation-demo
-  annotations:
-    description: >-
-      Test workload for verifying Kyverno mutation rules. Intentionally omits
-      'allowPrivilegeEscalation' and the 'security.kyverno.io/hardened' label.
-      Upon admission, Kyverno automatically mutates this pod to inject these security defaults.
 spec:
   restartPolicy: Never
   containers:
     - name: nginx
       image: nginxinc/nginx-unprivileged:alpine
-      # Note: allowPrivilegeEscalation is omitted so Kyverno can inject it automatically
       securityContext:
         runAsNonRoot: true
       resources:
