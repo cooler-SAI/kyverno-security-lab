@@ -1,16 +1,19 @@
 # Kyverno Security Lab
 
-A hands-on, practical lab for implementing Kubernetes cluster security and governance using Policy-as-Code with **Kyverno**. This project demonstrates policy enforcement and automated resource mutation using standard, Kubernetes-native Kyverno `ClusterPolicy` (`kyverno.io/v1`).
+A hands-on, enterprise-grade lab for implementing Kubernetes cluster security, governance, and DevSecOps using Policy-as-Code with **Kyverno** and **Trivy**. This project demonstrates standard, Kubernetes-native Kyverno `ClusterPolicy` (`kyverno.io/v1`) validation, mutation, shift-left offline testing, and continuous security scanning.
 
 ---
 
 ## Table of Contents
 
 - [Project Overview](#project-overview)
+- [Enterprise DevSecOps Architecture](#enterprise-devsecops-architecture)
 - [Key Features](#key-features)
 - [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
 - [Quick Start (Automated Lab)](#quick-start-automated-lab)
+- [Local Shift-Left Security Scans (Trivy & Kyverno CLI)](#local-shift-left-security-scans-trivy--kyverno-cli)
+- [GitHub Actions CI/CD Pipeline](#github-actions-cicd-pipeline)
 - [Step-by-Step Lab Walkthrough](#step-by-step-lab-walkthrough)
   - [1. Provision Local Cluster with Kind](#1-provision-local-cluster-with-kind)
   - [2. Install Kyverno via Helm](#2-install-kyverno-via-helm)
@@ -42,13 +45,36 @@ In multi-tenant or production Kubernetes environments, uncontrolled container wo
 - **Root User Execution:** Containers running as root (`UID 0`) increase the blast radius if an application is compromised.
 - **Inconsistent Baseline Hardening:** Developers may omit security flags like `allowPrivilegeEscalation: false` or compliance labels, creating governance gaps.
 
-This lab demonstrates how to enforce mandatory resource governance, block dangerous privileged containers, and automatically mutate workloads at admission time to inject security defaults using Kyverno.
+This lab demonstrates how to enforce mandatory resource governance, block dangerous privileged containers, and automatically mutate workloads at admission time to inject security defaults using Kyverno, while guarding the software supply chain with Trivy.
 
-### Why Kyverno?
-- **Kubernetes-Native:** Written in declarative YAML — no custom domain-specific languages (DSLs) like Rego or Go programming required.
-- **Pattern Matching & Mutation:** Intuitive declarative overlays to validate, mutate, generate, or clean up Kubernetes resources.
-- **Flexible Actions:** Supports both auditing (`Audit`) and active admission enforcement (`Enforce`).
-- **Comprehensive Lifecycle:** Validates incoming manifests and provides self-healing mutations out of the box.
+---
+
+## Enterprise DevSecOps Architecture
+
+Production-grade platform engineering teams protect Kubernetes clusters using a synchronized **Two-Layer Security Defense**:
+
+```
+[ Developer Commit / Pull Request ]
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 1: Shift-Left Security (Local & CI/CD Pipeline)       │
+│                                                             │
+│ • Trivy IaC Scanner: Detects Kubernetes misconfigurations   │
+│ • Trivy CVE Scanner: Scans container images for CVEs        │
+│ • Kyverno CLI: Executes declarative policy unit tests       │
+│   (Runs offline in seconds without requiring a cluster)     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Blocks non-compliant PRs before merge)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 2: In-Cluster Admission & Governance (Runtime)         │
+│                                                             │
+│ • Kyverno Mutating Webhook: Injects security defaults & tags│
+│ • Kyverno Validating Webhook: Denies non-compliant pods     │
+│ • Kyverno PolicyReports: In-cluster continuous compliance   │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -57,10 +83,11 @@ This lab demonstrates how to enforce mandatory resource governance, block danger
 - **Policy-as-Code:** Declarative policy definitions managed under version control.
 - **Standard CRD:** Uses the production-standard `kyverno.io/v1` `ClusterPolicy` resource.
 - **Validation & Mutation Engines:** Combines admission blocking rules (`validate`) with automated manifest self-healing (`mutate`).
-- **Pod Security Standards (Baseline & Restricted):** Blocks privileged container workloads and mandates non-root execution.
-- **Comprehensive Container Coverage:** Evaluates `spec.containers`, `spec.initContainers`, and `spec.ephemeralContainers`.
-- **Shift-Left Ready:** Policies and manifests can be validated in CI/CD pipelines before deployment to clusters.
-- **Automated Lab Runner:** Cross-platform scripts (`run-lab.sh` and `run-lab.ps1`) for one-command execution and testing across all policies.
+- **Pod Security Standards (Baseline & Restricted):** Blocks privileged container workloads, mandates non-root execution, and disallows privilege escalation.
+- **Offline Shift-Left Testing:** Includes a native `kyverno test` suite (`kyverno-test.yaml`) for instant policy unit testing without a cluster.
+- **IaC & Image Vulnerability Scanning:** Integrated with Aqua Security's **Trivy** for misconfiguration and CVE scanning.
+- **Automated CI/CD Pipeline:** Fully configured GitHub Actions workflow (`.github/workflows/security-ci.yml`) uploading SARIF reports to GitHub Security.
+- **Automated Lab Runners:** Cross-platform scripts (`run-lab.sh`, `run-lab.ps1`, `scan.sh`, `scan.ps1`) for local automation.
 
 ---
 
@@ -68,6 +95,9 @@ This lab demonstrates how to enforce mandatory resource governance, block danger
 
 ```plaintext
 kyverno-security-lab/
+├── .github/
+│   └── workflows/
+│       └── security-ci.yml       # GitHub Actions CI workflow (Trivy + Kyverno CLI)
 ├── kind-config.yaml              # Kind multi-node cluster configuration (1 control plane, 1 worker)
 ├── require-limits.yaml           # Kyverno ClusterPolicy enforcing CPU & memory limits
 ├── restrict-privilege.yaml       # Kyverno ClusterPolicy restricting privileged mode containers
@@ -78,6 +108,9 @@ kyverno-security-lab/
 ├── bad-pod-root.yaml             # Negative test case (violates policy, runs as root user)
 ├── mutate-pod.yaml               # Mutation test case (omits security defaults to verify auto-injection)
 ├── good-pod.yaml                 # Positive test case (conforms to all policies)
+├── kyverno-test.yaml             # Kyverno CLI native policy unit test suite
+├── scan.sh                       # Local DevSecOps scanner script (Linux / macOS / WSL)
+├── scan.ps1                      # Local DevSecOps scanner script (Windows PowerShell)
 ├── run-lab.sh                    # Automated end-to-end lab script (Linux / macOS / WSL)
 ├── run-lab.ps1                   # Automated end-to-end lab script (Windows PowerShell)
 └── README.md                     # Project documentation and hands-on guide
@@ -95,13 +128,46 @@ Before starting, ensure you have the following tools installed:
 | [Kind](https://kind.sigs.k8s.io/) | `>= 0.20` | Local multi-node Kubernetes cluster management |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | `>= 1.28` | Kubernetes CLI |
 | [Helm](https://helm.sh/) | `>= 3.12` | Kubernetes package manager for Kyverno installation |
-| [Kyverno CLI](https://kyverno.io/docs/kyverno-cli/) | `>= 1.12` | *(Optional)* Offline policy testing in CI/CD |
+| [Kyverno CLI](https://kyverno.io/docs/kyverno-cli/) | `>= 1.12` | Offline policy testing in CI/CD and locally |
+| [Trivy](https://aquasecurity.github.io/trivy/) | `>= 0.50` | IaC misconfiguration and container image CVE scanning |
+
+---
+
+## Local Shift-Left Security Scans (Trivy & Kyverno CLI)
+
+You can run comprehensive pre-commit security audits on your machine without starting Docker or Kind:
+
+### On Windows (PowerShell)
+```powershell
+.\scan.ps1
+```
+
+### On Linux / macOS / WSL
+```bash
+chmod +x scan.sh
+./scan.sh
+```
+
+**What this executes:**
+1. **`kyverno test .`**: Executes all unit tests declared in `kyverno-test.yaml`, verifying that policies fail and pass expected manifests.
+2. **`trivy config .`**: Scans all Kubernetes YAML files for misconfigurations against CIS Kubernetes Benchmarks.
+3. **`trivy image ...`**: Scans the compliant container image (`nginxinc/nginx-unprivileged:alpine`) for CVE vulnerabilities.
+
+---
+
+## GitHub Actions CI/CD Pipeline
+
+The repository includes a ready-to-use GitHub Actions workflow located at [`.github/workflows/security-ci.yml`](.github/workflows/security-ci.yml):
+
+- **Job 1: `kyverno-test`**: Installs Kyverno CLI and executes `kyverno test .` on every push and pull request.
+- **Job 2: `trivy-iac-scan`**: Scans manifests for security misconfigurations and uploads a SARIF report to GitHub Advanced Security.
+- **Job 3: `trivy-image-scan`**: Scans target container images for HIGH and CRITICAL CVE vulnerabilities.
 
 ---
 
 ## Quick Start (Automated Lab)
 
-If you have all prerequisites installed and Docker running, you can execute the entire lab end-to-end (cluster creation, Kyverno installation, policy deployment, and negative/mutation/positive testing) using a single command:
+If you have all prerequisites installed and Docker running, you can execute the entire live cluster lab end-to-end:
 
 ### Linux / macOS / WSL
 ```bash
@@ -139,17 +205,7 @@ Both scripts support granular subcommands:
 
 ### 1. Provision Local Cluster with Kind
 
-The repository includes a ready-to-use Kind cluster configuration file named `kind-config.yaml` to set up a multi-node cluster (1 control plane, 1 worker):
-
-```yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-  - role: worker
-```
-
-Spin up the cluster:
+Spin up the multi-node Kind cluster using `kind-config.yaml`:
 
 ```bash
 kind create cluster --config kind-config.yaml --name kyverno-lab
@@ -166,19 +222,12 @@ kubectl get nodes
 
 ### 2. Install Kyverno via Helm
 
-Add the official Kyverno Helm repository:
+Add the official Kyverno Helm repository and deploy Kyverno into namespace `kyverno`:
 
 ```bash
 helm repo add kyverno https://kyverno.github.io/kyverno/
 helm repo update
-```
-
-Install Kyverno into its own dedicated namespace (`kyverno`):
-
-```bash
-helm install kyverno kyverno/kyverno \
-  --namespace kyverno \
-  --create-namespace
+helm install kyverno kyverno/kyverno --namespace kyverno --create-namespace
 ```
 
 ---
@@ -200,8 +249,6 @@ Check the pods and Custom Resource Definitions (CRDs):
 kubectl get pods -n kyverno
 kubectl get crd | grep kyverno
 ```
-
-You should see controllers running (admission controller, background controller, reports controller) and the `clusterpolicies.kyverno.io` CRD registered.
 
 ---
 
@@ -237,68 +284,37 @@ restrict-root-user                true        true         true    10s   Ready
 
 #### Negative Test 1: Reject Pod Without Limits
 
-Attempt to deploy `bad-pod.yaml`, which does not specify `resources.limits`:
+Attempt to deploy `bad-pod.yaml`:
 
 ```bash
 kubectl apply -f bad-pod.yaml
 ```
 
-**Expected Result (Admission Blocked):**
-The admission webhook intercepts the request and blocks pod creation:
-
-```plaintext
-Error from server: error when creating "bad-pod.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
-
-resource Pod/default/test-pod-bad was blocked due to the following policies 
-
-require-cpu-memory-limits:
-  check-cpu-memory-limits: 'validation error: CPU and memory resource limits are required
-    for all containers. rule check-cpu-memory-limits failed at path /spec/containers/0/resources/limits/'
-```
+**Expected Result:** Kyverno admission webhook intercepts and blocks pod creation with a `403 Forbidden` validation error.
 
 ---
 
 #### Negative Test 2: Reject Privileged Container
 
-Attempt to deploy `bad-pod-priv.yaml`, which requests `securityContext.privileged: true`:
+Attempt to deploy `bad-pod-priv.yaml`:
 
 ```bash
 kubectl apply -f bad-pod-priv.yaml
 ```
 
-**Expected Result (Admission Blocked):**
-
-```plaintext
-Error from server: error when creating "bad-pod-priv.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
-
-resource Pod/default/test-pod-hacker-priv was blocked due to the following policies 
-
-restrict-privileged-containers:
-  validate-privileged: 'validation error: Privileged mode is prohibited. Containers
-    must not request securityContext.privileged: true. rule validate-privileged failed at path /spec/containers/0/securityContext/privileged/'
-```
+**Expected Result:** Kyverno blocks the pod because `securityContext.privileged: true` is prohibited.
 
 ---
 
 #### Negative Test 3: Reject Root User Container
 
-Attempt to deploy `bad-pod-root.yaml`, which does not configure `runAsNonRoot: true`:
+Attempt to deploy `bad-pod-root.yaml`:
 
 ```bash
 kubectl apply -f bad-pod-root.yaml
 ```
 
-**Expected Result (Admission Blocked):**
-
-```plaintext
-Error from server: error when creating "bad-pod-root.yaml": admission webhook "validate.kyverno.svc-fail" denied the request: 
-
-resource Pod/default/test-pod-bad-root was blocked due to the following policies 
-
-restrict-root-user:
-  validate-non-root: 'validation error: Running as root is prohibited. Containers
-    must set securityContext.runAsNonRoot: true. rule validate-non-root failed at path /spec/containers/0/securityContext/'
-```
+**Expected Result:** Kyverno blocks the pod because `securityContext.runAsNonRoot: true` is missing.
 
 ---
 
@@ -478,18 +494,23 @@ spec:
 
 ### Key Mutation Concepts
 
-1. **`patchStrategicMerge`**:
-   - Merges declarative snippets directly into the target resource.
-2. **Conditional Anchor `(name): "*"`**:
-   - Matches every container in the `containers` array regardless of its name.
-3. **Addition Anchor `+(field): value`**:
-   - Injects the specified field and value **only if it does not already exist**. If the workload already defines `allowPrivilegeEscalation`, Kyverno preserves the author's explicit configuration.
+1. **`patchStrategicMerge`**: Merges declarative snippets directly into the target resource.
+2. **Conditional Anchor `(name): "*"`**: Matches every container in the `containers` array regardless of its name.
+3. **Addition Anchor `+(field): value`**: Injects the specified field and value **only if it does not already exist**. If the workload already defines `allowPrivilegeEscalation`, Kyverno preserves the author's explicit configuration.
 
 ---
 
 ## Testing with Kyverno CLI (Shift-Left / CI/CD)
 
-You can validate manifests against Kyverno policies locally or in continuous integration pipelines without deploying a live Kubernetes cluster:
+### Native Declarative Test Suite (`kyverno test`)
+The repository includes a declarative test suite in `kyverno-test.yaml`. Run all tests with a single command:
+
+```bash
+kyverno test .
+```
+
+### Single Policy Ad-Hoc Evaluation
+You can also evaluate individual policies against specific manifests:
 
 ```bash
 # Test resource limit enforcement
@@ -551,12 +572,13 @@ kind delete cluster --name kyverno-lab
 
 ## Best Practices & Next Steps
 
-1. **Pair Mutation with Validation:** Auto-inject secure defaults at admission, while retaining strict validation rules for critical boundaries.
-2. **Enforce Requests alongside Limits:** Prevent node overcommitment by pairing limits with guaranteed requests.
-3. **Disallow Privileged Containers:** Ensure `securityContext.privileged: false` is enforced across all workloads.
-4. **Prevent Root Users:** Require containers to run as non-root (`runAsNonRoot: true`).
-5. **Disallow `:latest` Image Tags:** Enforce immutable image tags or SHA256 digests in manifests.
-6. **Gradual Rollout:** Deploy new policies with `validationFailureAction: Audit` first to assess impact before switching to `Enforce`.
+1. **Adopt Two-Layer Defense:** Enforce policies in CI/CD with Trivy & Kyverno CLI before deploying to Kubernetes.
+2. **Pair Mutation with Validation:** Auto-inject secure defaults at admission, while retaining strict validation rules for critical boundaries.
+3. **Enforce Requests alongside Limits:** Prevent node overcommitment by pairing limits with guaranteed requests.
+4. **Disallow Privileged Containers:** Ensure `securityContext.privileged: false` is enforced across all workloads.
+5. **Prevent Root Users:** Require containers to run as non-root (`runAsNonRoot: true`).
+6. **Disallow `:latest` Image Tags:** Enforce immutable image tags or SHA256 digests in manifests.
+7. **Gradual Rollout:** Deploy new policies with `validationFailureAction: Audit` first to assess impact before switching to `Enforce`.
 
 ---
 

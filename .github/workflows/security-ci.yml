@@ -1,0 +1,72 @@
+name: Enterprise DevSecOps CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  kyverno-test:
+    name: Kyverno Policy Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Kyverno CLI
+        uses: kyverno/action-install-cli@v0.4.0
+
+      - name: Run Kyverno Test Suite
+        run: |
+          echo "=== Executing Kyverno CLI Policy Unit Tests ==="
+          kyverno test .
+
+  trivy-iac-scan:
+    name: Trivy IaC & Configuration Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy IaC / Config Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Generate Trivy SARIF Report
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-iac-results.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-iac-results.sarif'
+        continue-on-error: true
+
+  trivy-image-scan:
+    name: Trivy Container Image Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Trivy Image Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'nginxinc/nginx-unprivileged:alpine'
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'

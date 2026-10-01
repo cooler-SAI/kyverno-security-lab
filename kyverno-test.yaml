@@ -1,0 +1,60 @@
+name: kyverno-security-lab-tests
+policies:
+  - require-limits.yaml
+  - restrict-privilege.yaml
+  - restrict-root-user.yaml
+  - mutate-security-context.yaml
+resources:
+  - bad-pod.yaml
+  - bad-pod-priv.yaml
+  - bad-pod-root.yaml
+  - mutate-pod.yaml
+  - good-pod.yaml
+results:
+  # 1. Require CPU & Memory Limits Policy
+  - policy: require-cpu-memory-limits
+    rule: check-cpu-memory-limits
+    resource: test-pod-bad
+    kind: Pod
+    result: fail
+  - policy: require-cpu-memory-limits
+    rule: check-cpu-memory-limits
+    resource: test-pod-good
+    kind: Pod
+    result: pass
+
+  # 2. Restrict Privileged Containers Policy
+  - policy: restrict-privileged-containers
+    rule: validate-privileged
+    resource: test-pod-hacker-priv
+    kind: Pod
+    result: fail
+  - policy: restrict-privileged-containers
+    rule: validate-privileged
+    resource: test-pod-good
+    kind: Pod
+    result: pass
+
+  # 3. Restrict Root User Policy
+  - policy: restrict-root-user
+    rule: validate-non-root
+    resource: test-pod-bad-root
+    kind: Pod
+    result: fail
+  - policy: restrict-root-user
+    rule: validate-non-root
+    resource: test-pod-good
+    kind: Pod
+    result: pass
+
+  # 4. Mutate Pod Security Defaults Policy
+  - policy: mutate-pod-security-defaults
+    rule: inject-audit-label
+    resource: test-pod-mutate
+    kind: Pod
+    result: pass
+  - policy: mutate-pod-security-defaults
+    rule: inject-allow-privilege-escalation
+    resource: test-pod-mutate
+    kind: Pod
+    result: pass
