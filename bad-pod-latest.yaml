@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.28.0/pod-v1.json
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod-latest
+  namespace: default
+  labels:
+    app.kubernetes.io/name: test-pod-latest
+    security.lab/role: negative-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: nginx
+      image: nginx:latest
+      resources:
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+      securityContext:
+        runAsNonRoot: true

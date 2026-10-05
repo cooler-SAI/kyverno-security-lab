@@ -1,18 +1,110 @@
-name: mutate-pod-security-defaults-test
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kyverno-security-lab-tests
 policies:
+  - require-limits.yaml
+  - restrict-privilege.yaml
+  - restrict-root-user.yaml
   - mutate-security-context.yaml
+  - disallow-latest-tag.yaml
+  - generate-default-networkpolicy.yaml
 resources:
+  - bad-pod.yaml
+  - bad-pod-priv.yaml
+  - bad-pod-root.yaml
+  - bad-pod-latest.yaml
   - mutate-pod.yaml
+  - good-pod.yaml
+  - test-namespace.yaml
+  - exception-pod-monitoring.yaml
+exceptions:
+  - policy-exception-monitoring.yaml
 results:
+  # 1. Require CPU & Memory Limits Policy
+  - policy: require-cpu-memory-limits
+    rule: check-cpu-memory-limits
+    kind: Pod
+    resources:
+      - test-pod-bad
+    result: fail
+  - policy: require-cpu-memory-limits
+    rule: check-cpu-memory-limits
+    kind: Pod
+    resources:
+      - test-pod-good
+    result: pass
+
+  # 2. Restrict Privileged Containers Policy
+  - policy: restrict-privileged-containers
+    rule: validate-privileged
+    kind: Pod
+    resources:
+      - test-pod-hacker-priv
+    result: fail
+  - policy: restrict-privileged-containers
+    rule: validate-privileged
+    kind: Pod
+    resources:
+      - test-pod-good
+    result: pass
+
+  # 3. Restrict Root User Policy
+  - policy: restrict-root-user
+    rule: validate-non-root
+    kind: Pod
+    resources:
+      - test-pod-bad-root
+    result: fail
+  - policy: restrict-root-user
+    rule: validate-non-root
+    kind: Pod
+    resources:
+      - test-pod-good
+    result: pass
+  # Exception test: node-exporter in monitoring namespace is granted skip via PolicyException
+  - policy: restrict-root-user
+    rule: validate-non-root
+    kind: Pod
+    resources:
+      - node-exporter-agent
+    result: skip
+
+  # 4. Mutate Pod Security Defaults Policy
   - policy: mutate-pod-security-defaults
     rule: inject-audit-label
-    resource: test-pod-mutate
     kind: Pod
+    resources:
+      - test-pod-mutate
     result: pass
-    patchedResource: mutated-pod-expected.yaml
+    patchedResources: mutated-pod-expected.yaml
   - policy: mutate-pod-security-defaults
     rule: inject-allow-privilege-escalation
-    resource: test-pod-mutate
     kind: Pod
+    resources:
+      - test-pod-mutate
     result: pass
-    patchedResource: mutated-pod-expected.yaml
+    patchedResources: mutated-pod-expected.yaml
+
+  # 5. Disallow Latest Tag Policy
+  - policy: disallow-latest-tag
+    rule: validate-image-tag
+    kind: Pod
+    resources:
+      - test-pod-latest
+    result: fail
+  - policy: disallow-latest-tag
+    rule: validate-image-tag
+    kind: Pod
+    resources:
+      - test-pod-good
+    result: pass
+
+  # 6. Generate Default NetworkPolicy
+  - policy: generate-default-networkpolicy
+    rule: create-default-deny-ingress
+    kind: Namespace
+    resources:
+      - tenant-billing
+    result: pass
+    generatedResource: generated-networkpolicy-expected.yaml

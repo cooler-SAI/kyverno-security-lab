@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: tenant-billing
+  labels:
+    app.kubernetes.io/managed-by: kyverno
+    security.kyverno.io/network-tier: isolated
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress

@@ -1,0 +1,25 @@
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: monitoring-root-exception
+  namespace: monitoring
+  annotations:
+    policies.kyverno.io/title: Monitoring DaemonSet Root Exception
+    policies.kyverno.io/category: Governance & Exceptions
+    policies.kyverno.io/description: >-
+      Grants an auditable, scoped exception for node-exporter pods in the 'monitoring'
+      namespace to bypass the 'restrict-root-user' policy for node-level metric collection.
+spec:
+  exceptions:
+    - policyName: restrict-root-user
+      ruleNames:
+        - validate-non-root
+  match:
+    any:
+      - resources:
+          kinds:
+            - Pod
+          namespaces:
+            - monitoring
+          names:
+            - "node-exporter*"

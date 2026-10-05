@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/kyverno.io/clusterpolicy_v1.json
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-default-networkpolicy
+  annotations:
+    policies.kyverno.io/title: Auto-Generate Default NetworkPolicy
+    policies.kyverno.io/category: Multi-Tenancy & Zero-Trust
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Namespace, NetworkPolicy
+    policies.kyverno.io/description: >-
+      Automatically creates a default-deny Ingress NetworkPolicy whenever a new
+      Namespace is created, enforcing zero-trust network isolation by default.
+spec:
+  rules:
+    - name: create-default-deny-ingress
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+      generate:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny-ingress
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: kyverno
+              security.kyverno.io/network-tier: isolated
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
