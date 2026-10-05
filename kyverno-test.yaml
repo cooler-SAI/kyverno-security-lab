@@ -21,7 +21,23 @@ resources:
 exceptions:
   - policy-exception-monitoring.yaml
 results:
-  # 1. Require CPU & Memory Limits Policy
+  # 1. Mutate Pod Security Defaults Policy (Evaluated first for cross-version CLI compatibility)
+  - policy: mutate-pod-security-defaults
+    rule: inject-audit-label
+    kind: Pod
+    resources:
+      - test-pod-mutate
+    result: pass
+    patchedResources: mutated-pod-expected.yaml
+  - policy: mutate-pod-security-defaults
+    rule: inject-allow-privilege-escalation
+    kind: Pod
+    resources:
+      - test-pod-mutate
+    result: pass
+    patchedResources: mutated-pod-expected.yaml
+
+  # 2. Require CPU & Memory Limits Policy
   - policy: require-cpu-memory-limits
     rule: check-cpu-memory-limits
     kind: Pod
@@ -35,7 +51,7 @@ results:
       - test-pod-good
     result: pass
 
-  # 2. Restrict Privileged Containers Policy
+  # 3. Restrict Privileged Containers Policy
   - policy: restrict-privileged-containers
     rule: validate-privileged
     kind: Pod
@@ -49,7 +65,7 @@ results:
       - test-pod-good
     result: pass
 
-  # 3. Restrict Root User Policy
+  # 4. Restrict Root User Policy
   - policy: restrict-root-user
     rule: validate-non-root
     kind: Pod
@@ -69,22 +85,6 @@ results:
     resources:
       - node-exporter-agent
     result: skip
-
-  # 4. Mutate Pod Security Defaults Policy
-  - policy: mutate-pod-security-defaults
-    rule: inject-audit-label
-    kind: Pod
-    resources:
-      - test-pod-mutate
-    result: pass
-    patchedResources: mutated-pod-expected.yaml
-  - policy: mutate-pod-security-defaults
-    rule: inject-allow-privilege-escalation
-    kind: Pod
-    resources:
-      - test-pod-mutate
-    result: pass
-    patchedResources: mutated-pod-expected.yaml
 
   # 5. Disallow Latest Tag Policy
   - policy: disallow-latest-tag

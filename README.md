@@ -253,7 +253,7 @@ flowchart LR
     A --> C["Job: Trivy IaC Scan"]
     A --> D["Job: Trivy Image Scan"]
 
-    B --> B1["Install Kyverno CLI<br/>kyverno test . (12 Tests)"]
+    B --> B1["Install Kyverno CLI v1.19.1<br/>kyverno test . (12 Tests)"]
     C --> C1["Scan Manifests<br/>Export SARIF Report"]
     C1 --> C2["Upload to GitHub Security Tab"]
     D --> D1["Scan nginx-unprivileged:alpine<br/>Check High/Crit CVEs"]
@@ -745,15 +745,15 @@ Loading test  ( kyverno-test.yaml ) ...
 │──────────│────────────────────────────────│───────────────────────────────────│───────────────────────────────────────│────────│────────│
 │ ID (12)  │ POLICY                         │ RULE                              │ RESOURCE                              │ RESULT │ REASON │
 │──────────│────────────────────────────────│───────────────────────────────────│───────────────────────────────────────│────────│────────│
-│ 1        │ require-cpu-memory-limits      │ check-cpu-memory-limits           │ v1/Pod/default/test-pod-bad           │ Pass   │ Ok     │
-│ 2        │ require-cpu-memory-limits      │ check-cpu-memory-limits           │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
-│ 3        │ restrict-privileged-containers │ validate-privileged               │ v1/Pod/default/test-pod-hacker-priv   │ Pass   │ Ok     │
-│ 4        │ restrict-privileged-containers │ validate-privileged               │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
-│ 5        │ restrict-root-user             │ validate-non-root                 │ v1/Pod/default/test-pod-bad-root      │ Pass   │ Ok     │
-│ 6        │ restrict-root-user             │ validate-non-root                 │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
-│ 7        │ restrict-root-user             │ validate-non-root                 │ v1/Pod/monitoring/node-exporter-agent │ Pass   │ Ok     │
-│ 8        │ mutate-pod-security-defaults   │ inject-audit-label                │ v1/Pod/default/test-pod-mutate        │ Pass   │ Ok     │
-│ 9        │ mutate-pod-security-defaults   │ inject-allow-privilege-escalation │ v1/Pod/default/test-pod-mutate        │ Pass   │ Ok     │
+│ 1        │ mutate-pod-security-defaults   │ inject-audit-label                │ v1/Pod/default/test-pod-mutate        │ Pass   │ Ok     │
+│ 2        │ mutate-pod-security-defaults   │ inject-allow-privilege-escalation │ v1/Pod/default/test-pod-mutate        │ Pass   │ Ok     │
+│ 3        │ require-cpu-memory-limits      │ check-cpu-memory-limits           │ v1/Pod/default/test-pod-bad           │ Pass   │ Ok     │
+│ 4        │ require-cpu-memory-limits      │ check-cpu-memory-limits           │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
+│ 5        │ restrict-privileged-containers │ validate-privileged               │ v1/Pod/default/test-pod-hacker-priv   │ Pass   │ Ok     │
+│ 6        │ restrict-privileged-containers │ validate-privileged               │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
+│ 7        │ restrict-root-user             │ validate-non-root                 │ v1/Pod/default/test-pod-bad-root      │ Pass   │ Ok     │
+│ 8        │ restrict-root-user             │ validate-non-root                 │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
+│ 9        │ restrict-root-user             │ validate-non-root                 │ v1/Pod/monitoring/node-exporter-agent │ Pass   │ Ok     │
 │ 10       │ disallow-latest-tag            │ validate-image-tag                │ v1/Pod/default/test-pod-latest        │ Pass   │ Ok     │
 │ 11       │ disallow-latest-tag            │ validate-image-tag                │ v1/Pod/default/test-pod-good          │ Pass   │ Ok     │
 │ 12       │ generate-default-networkpolicy │ create-default-deny-ingress       │ /default-deny-ingress                 │ Pass   │ Ok     │
